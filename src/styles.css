@@ -1,0 +1,1134 @@
+/* 共通のスタイル（docs/SPEC.md の 10.・14.3）。DS（Diary Studio）の src/styles.css を写し、DS だけの物（区分の色・ラベルの24色・
+   カレンダーの色と部品・ドラッグ・畳む・目立たせる動き・右の列）を外した物（DS は NS の物から、小説の機能の色・原稿の書体などを外した）。
+
+   ===== デザイントークン =====
+   外観は3種類。<html data-theme> で切り替える（「端末の設定に合わせる」は white か dark が入る。最初の描画の前は
+   src/launch/launch.js の boot()、起動後は src/ui/Layout.tsx の PrefsEffect が入れる）。
+   - white（ホワイト）: 白い地
+   - dark（ダーク）: 黒い地
+   - deep-dark（ディープダーク）: さらに暗く、明るい色を抑える
+   差し色（--accent・--primary・--switch-on・--selection）とログインの画面の地（--cover）は、3つの外観ともグレーの濃淡
+   （DS と同じ値。起動アニメーションとアプリのアイコンのオレンジは別の物で、ここでは使わない）。
+   色の値は DS の docs/SPEC.md の 4.5 の表と同じ（src/styles.test.ts で確かめる）。TS だけの色（重大印など）は段階2で、この3つの規則に足す。
+   部品はこの変数だけを使い、#fff などの色を直接書かない。字の色は、置く地の上で 4.5:1 以上。
+
+   等幅の英数字の書体（Roboto Mono。latin の 300・400・500・600）は src/main.tsx で読み込む（ここで @import すると同じ
+   @font-face が2つずつできるので、読み込むのは main.tsx の1か所だけにしている） */
+
+/* ===== 外観で変わらない物 ===== */
+:root {
+  /* 書体（DS の docs/SPEC.md の 4.7）。各端末の標準のゴシック体: iOS・Mac はヒラギノ角ゴ、Windows は游ゴシック UI（なければメイリオ）、
+     Android は sans-serif（<html lang="ja"> なので Noto Sans CJK JP）になる */
+  --font-gothic: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', Meiryo, 'Noto Sans JP', system-ui, sans-serif;
+  --font-ui: var(--font-gothic);
+  /* 等幅の英数字（数字・英語の見出し・曜日と月の英字）。日本語が混ざった時はゴシックで出る。600 より太い字は使わない */
+  --font-mono: 'Roboto Mono', var(--font-ui);
+
+  /* 余白は 4px を単位にする（4・8・12・16・24・32。DS の docs/SPEC.md の 4.8） */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  /* 画面の左右の余白（S・M は 16px、L は 24px。下の @media で替える） */
+  --gutter: 16px;
+
+  /* 角丸 */
+  --radius: 10px; /* パネル */
+  --radius-sm: 6px; /* ボタン・カード・入力欄（NS） */
+  --radius-pill: 999px; /* バッジ */
+  --radius-modal: 14px; /* 小さな画面 */
+  --radius-sheet: 16px; /* 下からのシートの上の角 */
+
+  /* 線（罫線・部品の枠 1px は色のトークンと合わせて使う） */
+
+  /* 動き（DS の docs/SPEC.md の 4.9） */
+  --dur-hover: 120ms; /* 乗せた時・押した時の色 */
+  --dur-backdrop: 120ms; /* 小さな画面の後ろ（fade-in） */
+  --dur-pop: 140ms; /* 小さな画面・下からのシート（pop-in） */
+  --dur-menu: 120ms; /* メニュー（pop-in） */
+  --dur-toast: 160ms; /* お知らせが出る・消える */
+
+  /* 大きさ */
+  --header-h: 52px;
+  --tap: 34px; /* 指で押せる所の最小（DS の docs/SPEC.md の 4.11） */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  /* iPhone のキーボードの高さ --kb は、入力欄の処理が visualViewport で測って <html> に入れる（無い間は 0。DS の docs/SPEC.md の 2.7） */
+
+  /* NS の部品に残る緑の「採用」の色は使わず、差し色のグレーにする（DS の docs/SPEC.md の 4.5） */
+  --active: var(--accent);
+  --active-soft: var(--accent-soft);
+  --active-fill: var(--primary);
+  --on-active: var(--on-primary);
+  /* 影（NS の値。どの外観でも同じ物） */
+  --shadow-knob: 0 1px 2px rgb(0 0 0 / 25%);
+  --shadow-segmented: 0 1px 2px rgb(0 0 0 / 12%);
+}
+
+@media (min-width: 900px) {
+  :root {
+    --gutter: 24px;
+  }
+}
+
+/* ===== 色: ホワイト（data-theme が無い時もこれ） ===== */
+:root {
+  /* 面と線 */
+  --bg: #f6f6f4;
+  --surface: #ffffff;
+  --surface-2: #fafaf9;
+  --surface-3: #efefec;
+  --rule: #dcdcd7;
+  --border: #e0e0dc;
+  --border-strong: #c8c8c2;
+  /* 文字 */
+  --text: #25282e;
+  --text-muted: #5c6068;
+  --text-faint: #62666e;
+  /* 差し色（グレーの濃淡。主なボタン・選んでいる所・リンク・フォーカスの枠だけ）。ホワイトは濃いグレー */
+  --accent: #4f5259;
+  --accent-strong: #373a40;
+  --accent-soft: #e8e8e5;
+  --on-accent: #ffffff;
+  --primary: #4f5259;
+  --primary-hover: #3e4146;
+  --primary-border: var(--primary);
+  --on-primary: #ffffff;
+  --switch-on: var(--accent);
+  /* ログインの画面（明るいグレーの地。ボタンの枠は地と 3:1 以上） */
+  --cover: #e0e0dd;
+  --on-cover: #25282e;
+  --cover-border: #73767d;
+  /* 注意 */
+  --danger: #b0402d;
+  --danger-soft: #f8e6e2;
+  /* お知らせ・重なり・そのほか */
+  --toast-bg: #2b2f38;
+  --toast-text: #ffffff;
+  --backdrop: rgb(15 17 22 / 45%);
+  --selection: #d6d7d9;
+  --brand-filter: none;
+  /* NS から持ってくる色（4.5 の表に無い物。NS のホワイトの値） */
+  --segmented-on: var(--surface);
+  --switch-knob: #ffffff;
+  --warn: #8d6110;
+  --warn-soft: #f8efd9;
+  --toast-border: transparent;
+  --toast-error-bg: #8e2f20;
+  --toast-error-text: #ffffff;
+  --shadow: 0 1px 2px rgb(30 30 40 / 6%), 0 4px 16px rgb(30 30 40 / 6%);
+  --shadow-sm: 0 1px 2px rgb(30 30 40 / 4%);
+  --shadow-lg: 0 10px 40px rgb(20 20 30 / 22%);
+  color-scheme: light;
+}
+
+/* ===== 色: ダーク（色の基準） ===== */
+:root[data-theme='dark'] {
+  /* 面と線 */
+  --bg: #101113;
+  --surface: #17181b;
+  --surface-2: #1c1d21;
+  --surface-3: #25272c;
+  --rule: #2a2c31;
+  --border: #2e3036;
+  --border-strong: #43464e;
+  /* 文字 */
+  --text: #e6e5e1;
+  --text-muted: #a8aab0;
+  --text-faint: #90939a;
+  /* 差し色（グレーの濃淡。主なボタン・選んでいる所・リンク・フォーカスの枠だけ）。字・輪は明るいグレー、地は中くらいのグレー */
+  --accent: #bcbdc1;
+  --accent-strong: #dcdcd9;
+  --accent-soft: #222428;
+  --on-accent: #121316;
+  --primary: #4b4e55;
+  --primary-hover: #565960;
+  --primary-border: var(--primary);
+  --on-primary: #f1f0ec;
+  --switch-on: #8b8e95;
+  /* ログインの画面（黒より少し明るいグレーの地。ボタンの枠は地と 3:1 以上） */
+  --cover: #2a2b2f;
+  --on-cover: #e6e5e1;
+  --cover-border: #7b7e85;
+  /* 注意 */
+  --danger: #f08a77;
+  --danger-soft: #331d19;
+  /* お知らせ・重なり・そのほか */
+  --toast-bg: #2a2c31;
+  --toast-text: #e6e4de;
+  --backdrop: rgb(0 0 0 / 62%);
+  --selection: #43464d;
+  --brand-filter: brightness(0.95);
+  /* NS から持ってくる色（NS のダークの値） */
+  --segmented-on: #383b43;
+  --switch-knob: #d6d4ce;
+  --warn: #e6b65a;
+  --warn-soft: #2e2512;
+  --toast-border: #43464e;
+  --toast-error-bg: #4a201a;
+  --toast-error-text: #ffd9d0;
+  --shadow: 0 1px 2px rgb(0 0 0 / 35%), 0 4px 16px rgb(0 0 0 / 30%);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-lg: 0 10px 40px rgb(0 0 0 / 60%);
+  color-scheme: dark;
+}
+
+/* ===== 色: ディープダーク（明るい色を抑える。差し色はグレー） ===== */
+:root[data-theme='deep-dark'] {
+  /* 面と線 */
+  --bg: #08090a;
+  --surface: #0e0f11;
+  --surface-2: #121315;
+  --surface-3: #191a1d;
+  --rule: #1e1f23;
+  --border: #202125;
+  --border-strong: #2d2f33;
+  /* 文字 */
+  --text: #aeaca6;
+  --text-muted: #8a8984;
+  --text-faint: #858480;
+  /* 差し色（グレーの濃淡。主なボタン・選んでいる所・リンク・フォーカスの枠だけ）。主なボタンは暗く沈める */
+  --accent: #9b9993;
+  --accent-strong: #b5b3ad;
+  --accent-soft: #17181b;
+  --on-accent: #0b0c0d;
+  --primary: #2a2b2e;
+  --primary-hover: #323337;
+  --primary-border: #45464a;
+  --on-primary: #bab8b2;
+  --switch-on: #616266;
+  /* ログインの画面（ダークよりもっと暗いグレーの地。ボタンの枠は地と 3:1 以上） */
+  --cover: #161719;
+  --on-cover: #aeaca6;
+  --cover-border: #68696c;
+  /* 注意 */
+  --danger: #b98a82;
+  --danger-soft: #1c1412;
+  /* お知らせ・重なり・そのほか */
+  --toast-bg: #141518;
+  --toast-text: #aeaca6;
+  --backdrop: rgb(0 0 0 / 70%);
+  --selection: #2c2d30;
+  --brand-filter: grayscale(0.85) brightness(0.6);
+  /* NS から持ってくる色（NS のディープダークの値） */
+  --segmented-on: #26282c;
+  --switch-knob: #9a9893;
+  --warn: #a99766;
+  --warn-soft: #18160f;
+  --toast-border: #2d2f33;
+  --toast-error-bg: #1d1412;
+  --toast-error-text: #c9a39b;
+  --shadow: 0 1px 2px rgb(0 0 0 / 50%);
+  --shadow-sm: none;
+  --shadow-lg: 0 10px 40px rgb(0 0 0 / 70%);
+  color-scheme: dark;
+}
+
+/* ===== ベース ===== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.6;
+  /* 数字は桁をそろえる（日本語の文・ボタン・お知らせの中の数字も。DS の docs/SPEC.md の 4.4） */
+  font-variant-numeric: tabular-nums;
+  /* チェックボックス・スライダーなどの標準部品も外観の色に合わせる */
+  accent-color: var(--accent);
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--accent);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ===== 文字（DS の docs/SPEC.md の 4.7） =====
+   等幅にするのは、数字や英字だけで1かたまりになっている所（日付・時刻・件数・版の時刻・アプリの名前など）だけ。
+   日本語の文・ボタン・お知らせの中の数字は ui の書体のまま */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  /* 読み込んでいない太さ（700 など）を端末が太らせると字がにじむので、太らせない */
+  font-synthesis-weight: none;
+}
+
+/* ===== レイアウト ===== */
+.app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ヘッダー（docs/SPEC.md の 14.5）: 高さ 52px＋ノッチの分。地は --surface を 92% にして後ろをぼかす。下に 1px の --rule */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: calc(var(--header-h) + var(--safe-top));
+  padding: var(--safe-top) max(var(--gutter), var(--safe-right)) 0 max(var(--gutter), var(--safe-left));
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  -webkit-backdrop-filter: saturate(1.4) blur(8px);
+  backdrop-filter: saturate(1.4) blur(8px);
+  border-bottom: 1px solid var(--rule);
+}
+
+.app-header .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.app-header .brand img {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  filter: var(--brand-filter);
+}
+
+.app-header .spacer {
+  flex: 1;
+}
+
+.page {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px max(var(--gutter), var(--safe-right)) calc(40px + var(--safe-bottom)) max(var(--gutter), var(--safe-left));
+}
+
+.page-narrow {
+  max-width: 820px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.row.nowrap {
+  flex-wrap: nowrap;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.faint {
+  color: var(--text-faint);
+}
+
+.small {
+  font-size: 13px;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== ボタン（NS の .btn。高さ 36px・角丸 6px・14px・600。DS の docs/SPEC.md の 4.11） ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    background var(--dur-hover),
+    border-color var(--dur-hover),
+    color var(--dur-hover);
+}
+
+.btn:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--surface-3);
+}
+
+/* aria-disabled は、処理中などでフォーカスを残したまま押せなくしているボタン */
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--primary);
+  border-color: var(--primary-border);
+  color: var(--on-primary);
+}
+
+.btn-primary:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--primary-hover);
+  border-color: color-mix(in srgb, var(--primary-hover) 70%, var(--primary-border));
+}
+
+/* 削除のボタン。--danger は --surface の上でだけ使う（DS の docs/SPEC.md の 4.5） */
+.btn-danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.btn-danger:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--danger-soft);
+}
+
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+}
+
+.btn-ghost:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--surface-3);
+}
+
+.btn-sm {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+/* 線のアイコンだけのボタン（34px 四方。歯車・‹ ›・畳む山形など） */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex: none;
+  transition:
+    background var(--dur-hover),
+    color var(--dur-hover);
+}
+
+.icon-btn:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.icon-btn:disabled,
+.icon-btn[aria-disabled='true'] {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* 線のアイコン（src/ui/icons.tsx。24 四方・線 1.8・丸い端・文字と同じ色） */
+.icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+/* 14px より小さく出すアイコン（12px。線は 2.4。DS の docs/SPEC.md の 4.10） */
+.icon.icon-sm {
+  width: 12px;
+  height: 12px;
+}
+
+/* ===== フォーム ===== */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* 入力欄: 高さ 36px・15px（指で操作する端末とスマホは 40px・16px。iOS のズームを防ぐ。DS の docs/SPEC.md の 4.7・4.11） */
+.input,
+.select,
+.textarea {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.textarea {
+  resize: vertical;
+  line-height: 1.7;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* スイッチ（ロック・起動アニメーションなど。オンの地は --switch-on） */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.switch .track {
+  width: 40px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--border-strong);
+  position: relative;
+  transition: background 0.15s;
+  flex: none;
+}
+
+.switch .track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--switch-knob);
+  box-shadow: var(--shadow-knob);
+  transition: transform 0.15s;
+}
+
+.switch input:checked + .track {
+  background: var(--switch-on);
+}
+
+.switch input:checked + .track::after {
+  transform: translateX(16px);
+}
+
+.switch input:focus-visible + .track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* セグメント（［年｜月｜週｜日］・外観の切り替えなど） */
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 9px;
+  background: var(--surface-3);
+}
+
+.segmented button {
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-hover),
+    color var(--dur-hover);
+}
+
+.segmented button[aria-pressed='true'],
+.segmented button[aria-selected='true'] {
+  background: var(--segmented-on);
+  color: var(--text);
+  box-shadow: var(--shadow-segmented);
+}
+
+/* ===== カード・リスト =====
+   DS は「灰色と細い線」の静かな紙面なので、面は影を付けず 1px の枠だけにする（DS の docs/SPEC.md の 4.4） */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.card-pad {
+  padding: 14px 16px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.section + .section {
+  margin-top: 28px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.empty {
+  padding: 22px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 14px;
+}
+
+/* ===== バッジ ===== */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+
+.badge-accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ===== 小さな画面（NS の Modal。L は真ん中の幅 520px・角丸 14px、S・M は下からのシート。DS の docs/SPEC.md の 3.8） ===== */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  /* iPhone ではキーボードの上に収める（--kb。DS の docs/SPEC.md の 2.7） */
+  bottom: var(--kb, 0px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--backdrop);
+  animation: fade-in var(--dur-backdrop) ease-out;
+}
+
+.modal {
+  width: min(520px, 100%);
+  max-height: calc(100dvh - 32px - var(--kb, 0px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius-modal);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: pop-in var(--dur-pop) ease-out;
+}
+
+.modal.wide {
+  width: min(760px, 100%);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 6px;
+}
+
+.modal-head h2 {
+  flex: 1;
+  font-size: 17px;
+}
+
+.modal-body {
+  padding: 8px 16px 16px;
+  overflow: auto;
+}
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px calc(12px + var(--safe-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  flex-wrap: wrap;
+}
+
+/* 3つ以上の選択肢（choiceDialog）。主な選択肢を右端に置く。S・M では縦に並べ、主な選択肢を上にする */
+.dialog-choices {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.choice:hover {
+  border-color: var(--accent);
+}
+
+.choice[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.choice strong {
+  font-size: 15px;
+}
+
+.choice span {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ===== お知らせ（トースト。DS の docs/SPEC.md の 3.9。下から 160ms） ===== */
+.toasts {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + var(--safe-bottom) + var(--kb, 0px));
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(480px, calc(100% - 24px));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--toast-border);
+  border-radius: 10px;
+  background: var(--toast-bg);
+  color: var(--toast-text);
+  box-shadow: var(--shadow-lg);
+  font-size: 14px;
+  pointer-events: auto;
+  animation: toast-in var(--dur-toast) ease-out;
+}
+
+/* 消える時（消す側が付けてから 160ms 後に取り除く。DS の docs/SPEC.md の 4.9。今のお知らせはすぐ取り除くので、消える動きを付ける時に使う） */
+.toast.is-leaving {
+  animation: toast-out var(--dur-toast) ease-in forwards;
+}
+
+.toast.error {
+  background: var(--toast-error-bg);
+  color: var(--toast-error-text);
+}
+
+.toast p {
+  margin: 0;
+  flex: 1;
+  /* 長い文は、句の切れ目で折り返し、文の中の改行も出す（DS の段階1の直し） */
+  text-wrap: pretty;
+  word-break: auto-phrase;
+  white-space: pre-line;
+}
+
+.toast button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+/* ［元に戻す］などのボタン（DS の docs/SPEC.md の 3.9） */
+.toast .toast-action {
+  opacity: 1;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ===== バナー ===== */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+/* 止まっている知らせの帯（段階1の同期の止まり・要更新などで使う） */
+.banner-error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* お知らせの帯（新しい版があります など） */
+.banner-info {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+/* ===== 設定の画面の区切りと行（aset-。DS の物。DS は NS の src/features/appSettings/appSettings.css から、
+   設定の画面（src/features/appSettings/）が使う物だけ） ===== */
+.card.aset-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+  min-width: 0;
+}
+
+.aset-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.aset-card-head h2 {
+  font-size: 17px;
+}
+
+.aset-card-lead {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.aset-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.aset-row-label {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.aset-row-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+.aset-row-control {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.segmented.aset-seg {
+  flex-wrap: wrap;
+}
+
+.segmented.aset-seg button {
+  min-height: var(--tap);
+}
+
+.switch.aset-switch {
+  min-height: var(--tap);
+}
+
+/* 折り返す時に切らずに保つ句（外観の「端末の設定に／合わせる」） */
+.aset-chunk {
+  display: inline-block;
+}
+
+.aset-switch-state {
+  min-width: 2.5em;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ===== 動き（DS の docs/SPEC.md の 4.9） ===== */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+
+/* ===== 幅の区分（DS の docs/SPEC.md の 3.2・4.11） =====
+   S は 599px まで、M は 600〜899px、L は 900px から。
+   スクリプトの側の同じ値は src/ui/hooks.ts の WIDTH_M・WIDTH_L（変える時は両方そろえる。src/styles.test.ts で確かめる） */
+.hide-mobile {
+}
+
+@media (max-width: 599px) {
+  .hide-mobile {
+    display: none !important;
+  }
+
+  .page {
+    padding-top: 14px;
+    padding-bottom: calc(32px + var(--safe-bottom));
+  }
+
+  .card.aset-card {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .aset-row {
+    padding-top: 12px;
+  }
+
+  .aset-row-label {
+    flex-basis: 100%;
+  }
+
+  .aset-row-control {
+    flex: 1 1 100%;
+  }
+
+  /* 外観の4つの選択肢は2列に並べる（1つだけ次の行に残らないように。長い名前は折り返す） */
+  .segmented.aset-seg-theme {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .segmented.aset-seg-theme button {
+    padding: 4px 8px;
+    white-space: normal;
+    line-height: 1.3;
+  }
+}
+
+@media (min-width: 600px) {
+  .show-mobile {
+    display: none !important;
+  }
+}
+
+/* S・M では小さな画面を下からせり上がるシートにする（高さは最大 92dvh・上の角丸 16px。DS の docs/SPEC.md の 3.8） */
+@media (max-width: 899px) {
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: calc(92dvh - var(--kb, 0px));
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  }
+
+  .dialog-choices {
+    flex-direction: column-reverse;
+  }
+
+  .dialog-choices .btn {
+    width: 100%;
+  }
+}
+
+/* 指で操作する端末（スマホ・タブレット・横持ち含む）と S・M では、押せる所を 34px 以上にし、入力欄を 40px・16px にする */
+@media (max-width: 899px), (pointer: coarse) {
+  .btn-sm,
+  .segmented button,
+  .switch {
+    min-height: var(--tap);
+  }
+
+  .input,
+  .select,
+  .textarea {
+    min-height: 40px;
+    font-size: 16px; /* iOS のズームを防ぐ */
+  }
+}
+
+@media (pointer: coarse) {
+  .app-header .brand {
+    min-height: var(--tap);
+    min-width: var(--tap);
+  }
+
+  .toast button {
+    min-width: var(--tap);
+    min-height: var(--tap);
+  }
+}
+
+/* ダイアログ（S・M では下からのシート）を開いている間は、通知を上に出してボタンを隠さない */
+body:has(.modal-backdrop) .toasts {
+  top: calc(12px + var(--safe-top));
+  bottom: auto;
+}
+
+/* 端末の「視差効果を減らす」では CSS の動きを全部止める（NS と同じ）。知らせの役目がある物（.flash の枠・ロックの印）は、
+   動かさずに出す側（JS）が付け外しする（DS の docs/SPEC.md の 4.9） */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

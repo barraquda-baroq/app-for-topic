@@ -1,0 +1,24 @@
+rules_version = '2';
+
+// テスト（Firebase エミュレーター。firebase.emu.json）用のアクセスルール。DS の firestore.emu.rules と同じ役目。
+// 段階0は本番の firestore.rules と同じ中身（持ち主のデータがまだ無いので、外す持ち主の制限が無い）。段階1で、本番から持ち主の
+// 制限だけを外した形にする（エミュレーターにつないだ開発サーバーは、持ち主を確かめないため）。
+// 持ち主の関所のテスト（src/sync/owner.emu.test.ts・e2e/owner-gate.sync.spec.ts）は、本番の firestore.rules を読み込んで確かめる。
+// 持ち主の記録 config/owner は、テストが管理者の権限（Authorization: Bearer owner。ルールを通さない）で作る（src/test/emulatorAdmin.ts）。
+// 本番を変えた時はこちらも直す。
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /config/owner {
+      allow get: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

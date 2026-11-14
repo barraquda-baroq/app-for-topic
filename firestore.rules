@@ -1,0 +1,27 @@
+rules_version = '2';
+
+// Topic Studio のアクセスルール（docs/SPEC.md の 3.・14.4）。DS の firestore.rules から、日記のデータの表と Claude 用のコネクタの
+// 部分を外した、段階0（土台）の最小の形。
+// - 持ち主: config/owner（{ uid, createdAt }）に記録したアカウント。作者が Firebase の画面（管理者）で作る（docs/DEPLOY.md の 3。形1）。
+//   アプリからは作れない・書き換えられない・消せない。ログインしたアカウントは、持ち主かを確かめるために読めるだけ
+//   （一覧（list）は読めない。get だけ）。
+// - 段階0には持ち主のデータがまだ無いので、ほかの場所は誰も読み書きできない。
+// - 段階1（データと同期）で持ち主のデータの場所を、段階3で Claude 用のコネクタの部分（版を足すだけ）を足す。
+// 変えた時は firestore.emu.rules もそろえ、src/sync/owner.emu.test.ts（npm run test:sync）で確かめる。
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /config/owner {
+      // 持ち主の記録は読むだけ（作る・書き換える・消すのは Firebase の画面＝管理者だけ。形1）
+      allow get: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

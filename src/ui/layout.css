@@ -1,0 +1,10 @@
+/* ===== ヘッダーの中身（docs/SPEC.md の 14.5。DS の src/ui/layout.css から、［MIM］のボタンを外した物） =====
+   ヘッダーの枠（.app-header: 高さ 52px＋ノッチの分・上に固定・--surface を 92% にしてぼかす・下に 1px の --rule）と
+   アイコン（26px・角丸 6px・--brand-filter）は src/styles.css。ここは名前 */
+
+/* 幅 380px 未満ではアプリの名前を出さず、アイコンだけ */
+@media (max-width: 379px) {
+  .app-header .brand-name {
+    display: none;
+  }
+}

@@ -1,0 +1,27 @@
+/* ===== トップの画面（docs/SPEC.md の 14.5） =====
+   段階0は版がまだ無いので、ヘッダーの下に「まだ版はありません」と、届く時期の小さな1行だけ。DS の空の表示（.empty）と同じく
+   細い破線の枠の中に、真ん中寄せで置く */
+.top-empty {
+  margin-top: var(--sp-6);
+  padding: var(--sp-8) var(--sp-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+.top-empty-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.top-empty-note {
+  margin: var(--sp-2) 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  /* 「12:00版」の数字は桁をそろえる（文の中なので ui の書体のまま） */
+  font-variant-numeric: tabular-nums;
+  text-wrap: pretty;
+  word-break: auto-phrase;
+}

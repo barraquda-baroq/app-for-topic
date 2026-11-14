@@ -1,0 +1,142 @@
+name: CI
+
+# 型の確かめ・整形の確かめ・端末の印の確かめ・単体テスト・持ち主の関所とアクセスルールのテスト（Firebase エミュレーター）・ビルド・
+# ビルドにテスト用の入口が無いことの確かめ・E2E（docs/SPEC.md の 14.7）。DS の .github/workflows/ci.yml から、WebKit の調べ
+# （webkit-diag）を外した物。持ち主の関所の E2E（エミュレーターにつないだ開発サーバー）は、別の仕事 e2e-sync で test と同時に流す。
+# 段階0の test:sync・test:e2e:sync は持ち主の関所とアクセスルールだけ（同期のテストは段階1で同じ所に足す）。
+# CI のログに記事の本文を出さない（docs/SPEC.md の 3.。段階0にはデータが無く、テストのアカウントは作り物だけ）
+on:
+  push:
+    branches: [main, master, 'claude/**', 'ccr-**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: 型チェック
+        run: npm run typecheck
+      - name: 整形の確かめ（Prettier）
+        run: npm run format:check
+      # E2E のテストには流す端末の印（@pc・@s・@m・@ios。playwright.config.ts）を付ける。印の無いテストはどの端末でも流れないので
+      # ここで止める（e2e/check-tags.mjs。テストを並べるだけで、ブラウザも開発サーバーも使わない）
+      - name: E2E のテストの端末の印の確かめ
+        run: npm run e2e:tags
+      # src/ の単体テストと、scripts/ のテスト（vite.config.ts の埋め込み・manifest・アイコン・書体のライセンス、公開の前の確かめ）
+      - name: 単体テスト
+        run: npm test
+      # Firebase エミュレーター（firebase-tools 15）は Java 21 以上が要る（ランナーの既定は 17）。DS の ci.yml と同じ形
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Firebase エミュレーターのキャッシュ
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ hashFiles('package-lock.json') }}
+      # 持ち主の関所（記録が無い・ほかのアカウント・確かめた端末）と本番のアクセスルール（src/sync/owner.emu.test.ts）
+      - name: 持ち主の関所とアクセスルールのテスト（Firebase エミュレーター）
+        run: npm run test:sync
+      - name: ビルド
+        run: npm run build
+      # 公開するビルドに、テスト用の入口（ログインの印・開発用フック window.__ts・エミュレーターのプロジェクト名・E2E で持ち主を
+      # 確かめさせる VITE_E2E_OWNER_LOCK）が残っていない（ビルドした物で印を置いても効かないことは e2e/offline.spec.ts でも確かめる）
+      - name: ビルドにテスト用の入口が無いことの確かめ
+        run: "! grep -rqE 'topic-studio:test-auth|fakeSignIn|showUpdateBanner|__ts|demo-topic-studio|VITE_E2E_OWNER_LOCK' dist/"
+      # ふだんは1分半ほど。GitHub の機械が Ubuntu の置き場（archive.ubuntu.com）の名前を引けない時、apt が1つずつ待ち続けて
+      # 30分の期限まで止まったことがある（DS の CI。2026-11-11）。1回を8分で打ち切り、1分おいてもう1回だけやり直す。
+      # 打ち切っても、sudo の下の apt-get は残って dpkg の鍵を持ち続ける（2回目が「Could not get lock」で落ちた）ので、
+      # やり直す前に残った apt-get を止め、鍵が空くのを待つ
+      - name: E2E テスト用ブラウザ
+        id: browsers
+        timeout-minutes: 18
+        run: |
+          for attempt in 1 2; do
+            if timeout 480 npx playwright install --with-deps chromium webkit; then exit 0; fi
+            echo "ブラウザを入れられなかった（${attempt}回目）"
+            [ "$attempt" = 2 ] && break
+            sudo pkill -x apt-get || true
+            for i in $(seq 30); do pgrep -x apt-get > /dev/null || break; sleep 2; done
+            sleep 60
+          done
+          exit 1
+      # PC 1400×900・Pixel 7・タブレット 768×1024（Chromium。どの端末で流すかはテストの印 @pc・@s・@m。playwright.config.ts）。
+      # E2E_PREVIEW: 上でビルドした dist/ を vite preview でも出し、オフラインで開けて書体も出ることを確かめる（e2e/offline.spec.ts）
+      - name: E2E テスト（PC・Android・タブレットの Chromium）
+        run: npm run test:e2e -- --project=desktop --project=mobile --project=tablet
+        env:
+          E2E_PREVIEW: '1'
+      # iPhone 14（WebKit。iOS の Chrome も Safari も中身は WebKit）。CI の WebKit はソフトウェアの描画でとても重く、
+      # 2つを同時に流すと CPU を取り合ってアプリの起動が大きく遅れることがあるので、1つずつ流す（playwright.config.ts の iphone）。
+      # Chromium の E2E が落ちても流す。前の段で止まってブラウザを入れていない時は流さない（WebKit が無いという誤りで埋まらないように）。
+      # E2E_LAUNCH_RENDERER=page: 起動アニメーションを Worker ではなくページの中で描かせる（テストの中だけ。e2e/helpers.ts）。
+      # CI の WebKit（Linux 版）は、Worker で描いた絵を画面に渡す所で時々ページごと落ちる（DS の CI で、Worker は 24回中 6回落ち、
+      # ページの中は 24回とも通った）。Worker の道筋は Chromium の E2E で確かめている
+      - name: E2E テスト（iPhone の WebKit）
+        if: ${{ !cancelled() && steps.browsers.outcome == 'success' }}
+        run: npm run test:e2e -- --project=iphone --workers=1
+        env:
+          E2E_WEBKIT: '1'
+          E2E_LAUNCH_RENDERER: page
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-results
+          path: e2e/artifacts
+          retention-days: 7
+
+  # 持ち主の関所の E2E（docs/SPEC.md の 14.4・14.7）。Firebase エミュレーターにつないだ開発サーバーで、記録が無い時・別のアカウント・
+  # まだ持ち主だと確かめていないアカウントで電波が無い時（e2e/owner-gate.sync.spec.ts）を Chromium で流す（playwright.sync.config.ts。
+  # 開発サーバーだけの VITE_E2E_OWNER_LOCK=1 で、エミュレーターでも本番と同じに持ち主を確かめる）。test の仕事と同時に流す
+  e2e-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Firebase エミュレーター（firebase-tools 15）は Java 21 以上が要る（test の仕事と同じ）
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Firebase エミュレーターのキャッシュ
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ hashFiles('package-lock.json') }}
+      # test の仕事の「E2E テスト用ブラウザ」と同じやり直し方（Ubuntu の置き場の名前を引けない時に止まり続けないように。Chromium だけ）
+      - name: E2E テスト用ブラウザ（Chromium）
+        timeout-minutes: 18
+        run: |
+          for attempt in 1 2; do
+            if timeout 480 npx playwright install --with-deps chromium; then exit 0; fi
+            echo "ブラウザを入れられなかった（${attempt}回目）"
+            [ "$attempt" = 2 ] && break
+            sudo pkill -x apt-get || true
+            for i in $(seq 30); do pgrep -x apt-get > /dev/null || break; sleep 2; done
+            sleep 60
+          done
+          exit 1
+      - name: 持ち主の関所の E2E（Firebase エミュレーター）
+        run: npm run test:e2e:sync
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-sync-results
+          path: e2e/artifacts
+          retention-days: 7

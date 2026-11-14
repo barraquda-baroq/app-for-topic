@@ -1,0 +1,1495 @@
+// 外観と起動アニメーション（src/launch/launch.js。index.html に埋め込むスクリプト）。DS の src/launch/launch.test.ts から（docs/SPEC.md の 14.2）。
+// 埋め込むのと同じ中身（?raw）をこのページで動かして確かめる。canvas は jsdom に無いので、何も描かない偽物にする
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import source from './launch.js?raw'
+
+type Appearance = 'white' | 'dark' | 'deep-dark'
+interface Env {
+  enabled: boolean
+  webdriver: boolean
+  forced: boolean
+  shownInSession: boolean
+  hidden?: boolean
+  reducedMotion: boolean
+}
+interface ControllerOptions {
+  still?: boolean
+  setTimeout: (fn: () => void, ms: number) => number
+  clearTimeout: (id: number) => void
+  now?: () => number
+  onFadeOut: (reason: string) => void
+  onRemove: () => void
+}
+interface Controller {
+  start(): void
+  tick(): void
+  animationEnded(): void
+  stillShown(): void
+  fallback(): void
+  appReady(): void
+  skip(): void
+  state(): string
+}
+interface FrameLimits {
+  setupMs: number
+  frameMs: number
+  frames: number
+}
+interface FrameWatch {
+  setup(ms: number): string
+  frame(ts: number, ms: number): string
+}
+interface Palette {
+  bg: string
+  laser: string
+  core: string
+  logo: string
+  hot: string
+  splitA: string
+  splitB: string
+  blend: string
+  glow: number
+  flicker: number
+  vignette: string
+  scanline: string
+}
+interface Player {
+  stop(): void
+  dispose(): void
+  drawAt(t: number): void
+}
+type TimeName =
+  | 'T_PAPER'
+  | 'T_OPEN0'
+  | 'T_SPREAD'
+  | 'T_LINES'
+  | 'T_TEXT'
+  | 'T_COLLAPSE'
+  | 'T_LINE'
+  | 'T_OPEN'
+  | 'T_OPENED'
+  | 'T_SCAN0'
+  | 'T_SCAN1'
+  | 'FRAME'
+  | 'LINE_STEP'
+  | 'TEXT_STEP'
+  | 'HOT'
+interface LaunchApi {
+  boot(): Appearance
+  appReady(): void
+  active(): boolean
+  resolveAppearance(prefs: unknown, systemDark: boolean): Appearance
+  animationTheme(appearance: string): string
+  decide(env: Env): 'none' | 'play' | 'still'
+  createController(o: ControllerOptions): Controller
+  createFrameWatch(limits: FrameLimits): FrameWatch
+  MAX_DPR: number
+  PAGE_DRAW: FrameLimits
+  play(stage: HTMLElement, theme: string, opts?: { still?: boolean; at?: number }): Player
+  workerSource(): string
+  TIMING: { stillMs: number; capMs: number; fadeMs: number }
+  DURATION: number
+  PALETTES: Record<'light' | 'dark' | 'deep', Palette>
+  TIMES: Record<TimeName, number>
+  GLYPHS: Record<string, string[]>
+  PAPER: {
+    FOLDED: string[]
+    SPREAD: string[]
+    FRAMES: string[][]
+    HEAD_RUN: number[]
+    BODY_RUNS: number[][]
+    LINE_ROWS: number[]
+  }
+  TEXT_LINES: string[]
+  paperPitch(safeW: number, safeH: number, dpr: number): number
+  textSize(p: number): number
+  logoLit(): Uint8Array
+}
+
+const PREFS_KEY = 'topic-studio:prefs'
+const w = window as unknown as {
+  TopicStudioLaunch?: LaunchApi
+}
+
+/** ページを開き直したことにする（スクリプトを読み込み直す。sessionStorage・localStorage は残る） */
+function load(): LaunchApi {
+  delete w.TopicStudioLaunch
+  new Function('window', 'document', source)(window, document)
+  return w.TopicStudioLaunch!
+}
+
+/**
+ * canvas の偽物（描く命令の数を数え、描いた絵（drawImage の1つ目）を控える）。
+ * drawCost を入れると、drawImage 1回ごとに時計（performance.now）がその分進む（重い端末で描いたことにする。clockOffset）
+ */
+let draws = 0
+let drawn: { width: number; height: number }[] = []
+/** 描いた絵と置いた場所（drawImage の2つ目・3つ目） */
+let placed: { img: { width: number; height: number }; x: number; y: number }[] = []
+let drawCost = 0
+let clockOffset = 0
+function fakeContext(): CanvasRenderingContext2D {
+  const gradient = { addColorStop() {} }
+  const props: Record<string, unknown> = {}
+  return new Proxy(props, {
+    get(t, key: string) {
+      if (key in t) return t[key]
+      if (key === 'createRadialGradient' || key === 'createLinearGradient') return () => gradient
+      if (key === 'drawImage')
+        return (img: { width: number; height: number }, x: number, y: number) => {
+          draws++
+          drawn.push(img)
+          placed.push({ img, x, y })
+          clockOffset += drawCost
+        }
+      return () => undefined
+    },
+    set(t, key: string, v) {
+      t[key] = v
+      return true
+    },
+  }) as unknown as CanvasRenderingContext2D
+}
+
+/** 端末の設定（prefers-color-scheme・prefers-reduced-motion） */
+function media({ dark = false, reduced = false } = {}) {
+  window.matchMedia = ((q: string) => ({
+    matches: q.includes('dark') ? dark : q.includes('reduced-motion') ? reduced : false,
+  })) as unknown as typeof window.matchMedia
+}
+
+function setWebdriver(on: boolean) {
+  Object.defineProperty(navigator, 'webdriver', { value: on, configurable: true })
+}
+
+const overlay = () => document.getElementById('ts-launch')
+/** 時計を進める（setTimeout・requestAnimationFrame） */
+const t = (ms: number) => vi.advanceTimersByTime(ms)
+
+beforeEach(() => {
+  draws = 0
+  drawn = []
+  placed = []
+  drawCost = 0
+  clockOffset = 0
+  localStorage.clear()
+  sessionStorage.clear()
+  media()
+  setWebdriver(false)
+  window.history.replaceState(null, '', '/')
+  document.head.innerHTML = '<meta name="theme-color" content="#ffffff">'
+  document.documentElement.removeAttribute('data-theme')
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(fakeContext as never)
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance'] })
+  // 時計（performance.now）は偽の時計に clockOffset を足した物（重い1コマの分だけ、タイマーより先に進むことがある）
+  const fakeNow = window.performance.now.bind(window.performance)
+  vi.spyOn(window.performance, 'now').mockImplementation(() => fakeNow() + clockOffset)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+  overlay()?.remove()
+})
+
+describe('外観（最初の描画の前）', () => {
+  it('設定の外観を、端末の設定によらずそのまま使う。「端末の設定に合わせる」は端末がダークならダーク', () => {
+    const api = load()
+    for (const dark of [false, true]) {
+      expect(api.resolveAppearance({ appearance: 'white' }, dark)).toBe('white')
+      expect(api.resolveAppearance({ appearance: 'dark' }, dark)).toBe('dark')
+      expect(api.resolveAppearance({ appearance: 'deep-dark' }, dark)).toBe('deep-dark')
+    }
+    expect(api.resolveAppearance({ appearance: 'system' }, true)).toBe('dark')
+    expect(api.resolveAppearance({ appearance: 'system' }, false)).toBe('white')
+    // 設定が無い・壊れている・知らない値は「端末の設定に合わせる」
+    expect(api.resolveAppearance({}, true)).toBe('dark')
+    expect(api.resolveAppearance(null, false)).toBe('white')
+    expect(api.resolveAppearance({ appearance: 'sepia' }, true)).toBe('dark')
+    expect(api.resolveAppearance({ appearance: 'light' }, false)).toBe('white')
+    // 読むのは DS と同じ項目名 appearance（NS の theme は読まない。docs/SPEC.md の 14.3）
+    expect(api.resolveAppearance({ theme: 'deep-dark' }, false)).toBe('white')
+  })
+
+  it('外観 → アニメーションの色: ホワイトは light（白地にオレンジ）、ダークは dark（黒地に明るいオレンジ）、ディープダークは deep（黒地に暗いオレンジ）', () => {
+    const api = load()
+    expect(api.animationTheme('white')).toBe('light')
+    expect(api.animationTheme('dark')).toBe('dark')
+    expect(api.animationTheme('deep-dark')).toBe('deep')
+    // 知らない外観はダーク
+    expect(api.animationTheme('sepia')).toBe('dark')
+  })
+
+  it('色の組は外観ごとのオレンジ（docs/SPEC.md の 14.2 の表）。ダークのロゴはアイコンのオレンジと同じ', () => {
+    const { PALETTES } = load()
+    expect(PALETTES.light).toEqual({
+      bg: '#fbfcfe',
+      laser: '#c66b01',
+      core: '#ad5d00',
+      logo: '#a85a02',
+      hot: '#c66b01',
+      splitA: '#ff4f8b',
+      splitB: '#2b7bff',
+      blend: 'source-over',
+      glow: 0.85,
+      flicker: 1,
+      vignette: 'rgba(40,16,0,0.03)',
+      scanline: 'rgba(0,0,0,0.016)',
+    })
+    expect(PALETTES.dark).toEqual({
+      bg: '#050607',
+      laser: '#e99652',
+      core: '#efcdb3',
+      logo: '#e99652',
+      hot: '#f3eae3',
+      splitA: '#ff2b6e',
+      splitB: '#2b7bff',
+      blend: 'lighter',
+      glow: 1,
+      flicker: 1,
+      vignette: 'rgba(0,0,0,0.6)',
+      scanline: 'rgba(0,0,0,0.24)',
+    })
+    expect(PALETTES.deep).toEqual({
+      bg: '#000000',
+      laser: '#a15600',
+      core: '#a86224',
+      logo: '#a15600',
+      hot: '#d19d77',
+      splitA: '#5c1430',
+      splitB: '#14366a',
+      blend: 'lighter',
+      glow: 0.45,
+      flicker: 0.35,
+      vignette: 'rgba(0,0,0,0.5)',
+      scanline: 'rgba(0,0,0,0.24)',
+    })
+  })
+
+  it('boot は <html data-theme> とブラウザの枠の色を決める（起動アニメーションを出さない時も）', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ appearance: 'deep-dark', launchAnimation: false }))
+    expect(load().boot()).toBe('deep-dark')
+    expect(document.documentElement.getAttribute('data-theme')).toBe('deep-dark')
+    expect(document.querySelector('meta[name="theme-color"]')!.getAttribute('content')).toBe('#0e0f11')
+    expect(overlay()).toBeNull()
+
+    media({ dark: true })
+    localStorage.setItem(PREFS_KEY, '{壊れた')
+    setWebdriver(true)
+    expect(load().boot()).toBe('dark')
+    expect(document.querySelector('meta[name="theme-color"]')!.getAttribute('content')).toBe('#17181b')
+  })
+})
+
+describe('出すかどうか（decide）', () => {
+  const base: Env = { enabled: true, webdriver: false, forced: false, shownInSession: false, reducedMotion: false }
+
+  it('ウインドウ・タブの最初の1回だけ（再読み込みでは出さない）', () => {
+    const { decide } = load()
+    expect(decide(base)).toBe('play')
+    expect(decide({ ...base, shownInSession: true })).toBe('none')
+  })
+
+  it('見えていないタブ（裏で開いた・ブラウザの先読み）では出さない（印はそのタブが見えた時に付ける。boot のテスト）', () => {
+    const { decide } = load()
+    expect(decide({ ...base, hidden: true })).toBe('none')
+    expect(decide({ ...base, hidden: true, forced: true, webdriver: true })).toBe('none')
+  })
+
+  it('設定でオフにすると出さない（強制しても）', () => {
+    const { decide } = load()
+    expect(decide({ ...base, enabled: false })).toBe('none')
+    expect(decide({ ...base, enabled: false, forced: true, webdriver: true })).toBe('none')
+  })
+
+  it('テスト（navigator.webdriver）では、強制した時だけ出す', () => {
+    const { decide } = load()
+    expect(decide({ ...base, webdriver: true })).toBe('none')
+    expect(decide({ ...base, webdriver: true, forced: true })).toBe('play')
+    // 強制しても、同じウインドウの再読み込みでは出さない
+    expect(decide({ ...base, webdriver: true, forced: true, shownInSession: true })).toBe('none')
+  })
+
+  it('視差効果を減らす設定では、動かさずに最後の絵だけ出す', () => {
+    const { decide } = load()
+    expect(decide({ ...base, reducedMotion: true })).toBe('still')
+    expect(decide({ ...base, reducedMotion: true, shownInSession: true })).toBe('none')
+  })
+})
+
+describe('消すまでの流れ（createController）', () => {
+  function setup(still = false) {
+    const events: string[] = []
+    const c = load().createController({
+      still,
+      setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimeout: (id) => window.clearTimeout(id),
+      onFadeOut: (reason) => events.push(`fade:${reason}@${Date.now() - t0}`),
+      onRemove: () => events.push(`remove@${Date.now() - t0}`),
+    })
+    const t0 = Date.now()
+    return { c, events }
+  }
+
+  beforeEach(() => {
+    vi.useRealTimers()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+  })
+
+  it('アニメーションの終わりとアプリの知らせの両方がそろってから消し始め、0.25秒で取り除く', () => {
+    const { c, events } = setup()
+    c.start()
+    expect(c.state()).toBe('playing')
+    vi.advanceTimersByTime(2270)
+    c.animationEnded()
+    expect(events).toEqual([])
+    vi.advanceTimersByTime(730)
+    c.appReady()
+    expect(events).toEqual(['fade:done@3000'])
+    expect(c.state()).toBe('fading')
+    vi.advanceTimersByTime(249)
+    expect(events).toHaveLength(1)
+    vi.advanceTimersByTime(1)
+    expect(events).toEqual(['fade:done@3000', 'remove@3250'])
+    expect(c.state()).toBe('removed')
+  })
+
+  it('アプリが先に知らせてきたら、アニメーションの終わりを待つ', () => {
+    const { c, events } = setup()
+    c.start()
+    vi.advanceTimersByTime(400)
+    c.appReady()
+    expect(events).toEqual([])
+    vi.advanceTimersByTime(1870)
+    c.animationEnded()
+    expect(events).toEqual(['fade:done@2270'])
+  })
+
+  it('アプリが知らせてこなくても、5秒で消える', () => {
+    const { c, events } = setup()
+    c.start()
+    c.animationEnded()
+    vi.advanceTimersByTime(4999)
+    expect(events).toEqual([])
+    vi.advanceTimersByTime(1)
+    expect(events).toEqual(['fade:cap@5000'])
+    vi.advanceTimersByTime(250)
+    expect(events).toEqual(['fade:cap@5000', 'remove@5250'])
+  })
+
+  it('押した・キーを押した時はすぐ消える（あとの知らせ・5秒の期限は何もしない）', () => {
+    const { c, events } = setup()
+    c.start()
+    vi.advanceTimersByTime(300)
+    c.skip()
+    expect(events).toEqual(['fade:skip@300'])
+    c.skip()
+    c.animationEnded()
+    c.appReady()
+    vi.advanceTimersByTime(10_000)
+    expect(events).toEqual(['fade:skip@300', 'remove@550'])
+  })
+
+  it('動かさない時は、最後の絵を描いてから0.5秒出して（アプリの知らせも待って）消す', () => {
+    const { c, events } = setup(true)
+    c.start()
+    c.appReady()
+    // 描く準備・Worker の立ち上がりの間は数えない
+    vi.advanceTimersByTime(200)
+    expect(events).toEqual([])
+    c.stillShown()
+    vi.advanceTimersByTime(499)
+    expect(events).toEqual([])
+    // 2度目の知らせ（Worker で描けずにページの中で描き直した時など）は数え直さない
+    c.stillShown()
+    vi.advanceTimersByTime(1)
+    expect(events).toEqual(['fade:done@700'])
+  })
+
+  it('動かさない時、最後の絵を描けないままなら5秒で消える。動かす時の stillShown は何もしない', () => {
+    const still = setup(true)
+    still.c.start()
+    still.c.appReady()
+    vi.advanceTimersByTime(5000)
+    expect(still.events).toEqual(['fade:cap@5000'])
+
+    const moving = setup()
+    moving.c.start()
+    moving.c.appReady()
+    moving.c.stillShown()
+    vi.advanceTimersByTime(4999)
+    expect(moving.events).toEqual([])
+    moving.c.animationEnded()
+    expect(moving.events).toEqual(['fade:done@4999'])
+  })
+
+  it('消し始めた後の stillShown は何もしない', () => {
+    const { c, events } = setup(true)
+    c.start()
+    c.skip()
+    c.stillShown()
+    c.appReady()
+    vi.advanceTimersByTime(10_000)
+    expect(events).toEqual(['fade:skip@0', 'remove@250'])
+  })
+
+  it('動かしていて重いので最後の絵に飛んだ（fallback）ら、そこから0.5秒出して（アプリの知らせも待って）消す', () => {
+    const { c, events } = setup()
+    c.start()
+    vi.advanceTimersByTime(300)
+    c.fallback()
+    // 0.5秒たってアニメーションの終わりになっても、アプリの知らせはまだ
+    vi.advanceTimersByTime(500)
+    expect(events).toEqual([])
+    vi.advanceTimersByTime(200)
+    c.appReady()
+    expect(events).toEqual(['fade:done@1000'])
+  })
+
+  it('fallback は、動かさない時・アニメーションが終わった後・2度目は何もしない', () => {
+    const still = setup(true)
+    still.c.start()
+    still.c.appReady()
+    still.c.fallback()
+    vi.advanceTimersByTime(4999)
+    expect(still.events).toEqual([])
+
+    const ended = setup()
+    ended.c.start()
+    ended.c.animationEnded()
+    ended.c.fallback()
+    vi.advanceTimersByTime(1000)
+    ended.c.appReady()
+    expect(ended.events).toEqual(['fade:done@1000'])
+
+    const twice = setup()
+    twice.c.start()
+    twice.c.appReady()
+    twice.c.fallback()
+    vi.advanceTimersByTime(400)
+    twice.c.fallback()
+    vi.advanceTimersByTime(100)
+    expect(twice.events).toEqual(['fade:done@500'])
+  })
+
+  describe('時計（now）を渡した時: タイマーが遅れても、出し始めからの実際の経過時間で5秒を確かめる', () => {
+    /** タイマーが重い処理で lateMs 遅れる（時計は進む） */
+    function lateSetup(lateMs: number) {
+      const events: string[] = []
+      const t0 = Date.now()
+      const c = load().createController({
+        setTimeout: (fn, ms) => window.setTimeout(fn, ms + lateMs),
+        clearTimeout: (id) => window.clearTimeout(id),
+        now: () => Date.now(),
+        onFadeOut: (reason) => events.push(`fade:${reason}@${Date.now() - t0}`),
+        onRemove: () => events.push(`remove@${Date.now() - t0}`),
+      })
+      return { c, events }
+    }
+
+    it('5秒たってからの tick（ページの中で描く1コマごと）で消し始める。その前の tick は何もしない', () => {
+      const { c, events } = lateSetup(3000)
+      c.start()
+      vi.advanceTimersByTime(4999)
+      c.tick()
+      expect(events).toEqual([])
+      vi.advanceTimersByTime(1)
+      c.tick()
+      expect(events).toEqual(['fade:cap@5000'])
+      // 消し始めた後の tick・遅れたタイマーは何もしない
+      c.tick()
+      vi.advanceTimersByTime(10_000)
+      expect(events).toEqual(['fade:cap@5000', 'remove@8250'])
+    })
+
+    it('5秒たってからの知らせでも消し始める（両方そろっていれば done）', () => {
+      const late = lateSetup(3000)
+      late.c.start()
+      vi.advanceTimersByTime(6000)
+      late.c.appReady()
+      expect(late.events).toEqual(['fade:cap@6000'])
+
+      const both = lateSetup(3000)
+      both.c.start()
+      both.c.appReady()
+      vi.advanceTimersByTime(6000)
+      both.c.animationEnded()
+      expect(both.events).toEqual(['fade:done@6000'])
+    })
+
+    it('時計を渡さない時は、tick は何もしない（タイマーだけで5秒）', () => {
+      const { c, events } = setup()
+      c.start()
+      vi.advanceTimersByTime(4999)
+      c.tick()
+      expect(events).toEqual([])
+      vi.advanceTimersByTime(1)
+      expect(events).toEqual(['fade:cap@5000'])
+    })
+  })
+})
+
+describe('ページの中で描く時の、1コマの時間の見張り（createFrameWatch）', () => {
+  it('決まり: 下ごしらえと最初の絵は 0.25秒、1コマは 0.05秒まで。コマの間隔は最初の5コマの真ん中の値で見る', () => {
+    expect(load().PAGE_DRAW).toEqual({ setupMs: 250, frameMs: 50, frames: 5 })
+  })
+
+  it('描く大きさの倍率の上限は 2（ページの中でも Worker でも同じ1つの値）', () => {
+    expect(load().MAX_DPR).toBe(2)
+  })
+
+  it('下ごしらえと最初の絵が 0.25秒を超えたら setup', () => {
+    const { createFrameWatch, PAGE_DRAW } = load()
+    const w = createFrameWatch(PAGE_DRAW)
+    expect(w.setup(250)).toBe('')
+    expect(w.setup(251)).toBe('setup')
+  })
+
+  it('1コマを描くのに 0.05秒を超えたら、そのコマで frame', () => {
+    const { createFrameWatch, PAGE_DRAW } = load()
+    const w = createFrameWatch(PAGE_DRAW)
+    expect(w.frame(16, 50)).toBe('')
+    expect(w.frame(33, 51)).toBe('frame')
+  })
+
+  it('最初の5コマの間隔の真ん中の値が 0.05秒を超えたら gaps（6コマ目で分かる）', () => {
+    const { createFrameWatch, PAGE_DRAW } = load()
+    const w = createFrameWatch(PAGE_DRAW)
+    const ts = [0, 80, 150, 240, 300, 400]
+    expect(ts.map((t) => w.frame(t, 2))).toEqual(['', '', '', '', '', 'gaps'])
+  })
+
+  it('アプリの起動の重い処理で1・2コマだけ遅れたのは数えない。6コマ目より後の間隔は見ない', () => {
+    const { createFrameWatch, PAGE_DRAW } = load()
+    const w = createFrameWatch(PAGE_DRAW)
+    // 間隔 16・300・16・250・16（真ん中の値は 16）
+    const ts = [0, 16, 316, 332, 582, 598]
+    expect(ts.map((t) => w.frame(t, 2))).toEqual(['', '', '', '', '', ''])
+    expect(w.frame(2000, 2)).toBe('')
+    expect(w.frame(4000, 2)).toBe('')
+  })
+})
+
+describe('絵の流れ（docs/SPEC.md の 14.2）', () => {
+  it('時刻は順に増え、全体（2.27秒）は 5秒の期限より短い。言葉の間隔のほかは DS と同じ時刻（潰れてから後の間隔は NS と同じ）', () => {
+    const { TIMES: T, DURATION, TIMING, TEXT_LINES } = load()
+    const order = [
+      T.T_PAPER,
+      T.T_OPEN0,
+      T.T_SPREAD,
+      T.T_LINES,
+      T.T_TEXT,
+      T.T_COLLAPSE,
+      T.T_LINE,
+      T.T_OPEN,
+      T.T_OPENED,
+      T.T_SCAN0,
+      T.T_SCAN1,
+      DURATION,
+    ]
+    for (let i = 1; i < order.length; i++) expect(order[i], `${i}`).toBeGreaterThan(order[i - 1])
+    expect(DURATION).toBe(2.27)
+    expect(DURATION * 1000).toBeLessThan(TIMING.capMs)
+    // 温まる（WARMUP）0.40秒の後に折った新聞。1面は 0.03秒ずつ8コマで開いて見開きになる
+    expect(T.T_PAPER).toBe(0.4)
+    expect(T.T_OPEN0).toBe(0.62)
+    expect(T.T_OPEN0 + 8 * T.FRAME).toBeCloseTo(T.T_SPREAD, 9)
+    // 見出しの行 → 本文の5行が 0.05秒ずつ（1.15秒まで）。言葉の10字は 0.035秒おき（1.30秒まで。DS の7字と同じ時刻）で、
+    // 潰れる前に灯り終わる（言葉を長くしたら、ここが落ちる。TEXT_STEP を詰めるか、言葉を短くする）
+    expect(T.T_LINES + 5 * T.LINE_STEP).toBeCloseTo(1.15, 9)
+    expect(T.T_TEXT).toBe(0.95)
+    const chars = TEXT_LINES.join('').length
+    expect(chars).toBe(10)
+    expect(T.T_TEXT + chars * T.TEXT_STEP).toBeCloseTo(1.3, 9)
+    expect(T.T_TEXT + chars * T.TEXT_STEP).toBeLessThan(T.T_COLLAPSE)
+    // 最後の字が灯ったばかりの明るい色（HOT）を終えてから、潰れる前のグリッチ（T_COLLAPSE の 0.1秒前）までに間がある
+    expect(T.T_TEXT + (chars - 1) * T.TEXT_STEP + T.HOT).toBeLessThan(T.T_COLLAPSE - 0.09)
+    expect(T.HOT).toBe(0.06)
+    const gaps = [T.T_LINE, T.T_OPEN, T.T_OPENED, T.T_SCAN0, T.T_SCAN1, DURATION].map((v, i, a) =>
+      Number((v - (i ? a[i - 1] : T.T_COLLAPSE)).toFixed(3)),
+    )
+    expect(gaps).toEqual([0.13, 0.06, 0.15, 0.06, 0.32, 0.13])
+  })
+
+  it('どの時刻の絵も、どの外観でも描ける', () => {
+    const api = load()
+    for (const theme of ['light', 'dark', 'deep']) {
+      const player = api.play(document.createElement('div'), theme, { still: true })
+      for (let ms = 0; ms <= 2270; ms += 5) player.drawAt(ms / 1000)
+      player.dispose()
+    }
+    expect(draws).toBeGreaterThan(0)
+  })
+
+  describe('描く絵（jsdom の大きさ 240×520・dpr 1 → 新聞の点の間隔 6px）', () => {
+    // 新聞の絵の大きさ（実ピクセル）: 幅は 点を置く列の数 × 6 ＋ 余白（光の分。2 間隔）12 × 2、高さは 20行 × 6 ＋ 24
+    const PAPER_H = 20 * 6 + 24
+    const width = (cols: number) => cols * 6 + 24
+    let player: Player
+    beforeEach(() => {
+      player = load().play(document.createElement('div'), 'dark', { still: true })
+    })
+    afterEach(() => player.dispose())
+    /** t 秒の絵で描いた絵のうち、大きさ（高さ）が h の物（同じ絵は1つに） */
+    const drawnAt = (t: number, h: number) => {
+      drawn = []
+      player.drawAt(t)
+      return [...new Set(drawn.filter((c) => c.height === h))]
+    }
+
+    it('折った新聞は 0.40秒に現れ、1面は 0.62秒から 0.03秒ずつ8コマで開いて、0.86秒からは見開き', () => {
+      expect(drawnAt(0.39, PAPER_H)).toEqual([])
+      const folded = drawnAt(0.5, PAPER_H)
+      expect(folded).toHaveLength(1)
+      // コマ1〜8 の絵（コマの真ん中の時刻）
+      const frames = [0, 1, 2, 3, 4, 5, 6, 7].map((f) => {
+        const imgs = drawnAt(0.62 + 0.03 * f + 0.015, PAPER_H)
+        expect(imgs, `コマ${f + 1}`).toHaveLength(1)
+        return imgs[0]
+      })
+      expect(new Set(frames).size).toBe(8)
+      expect(frames[0]).toBe(folded[0])
+      // コマ1〜4 は1面（折り目と 16列）、コマ5〜8 は左のページが 2→6→11→16 列ずつ足される
+      expect(frames.map((c) => c.width)).toEqual([17, 17, 17, 17, 19, 23, 28, 33].map(width))
+      // コマの切り替わり
+      expect(drawnAt(0.649, PAPER_H)).toEqual([frames[0]])
+      expect(drawnAt(0.651, PAPER_H)).toEqual([frames[1]])
+      expect(drawnAt(0.829, PAPER_H)).toEqual([frames[6]])
+      // 見開きは潰れるまで同じ絵
+      for (const t of [0.86, 1.0, 1.2, 1.4]) expect(drawnAt(t, PAPER_H), `${t}`).toEqual([frames[7]])
+      // 現れる時の 0.06秒だけ、色ずれの2枚（splitA・splitB）も描く
+      expect(drawnAt(0.41, PAPER_H)).toHaveLength(3)
+      // 一本の線になった後は描かない
+      expect(drawnAt(1.6, PAPER_H)).toEqual([])
+    })
+
+    it('記事の行: 0.90秒に見出しの行、続いて本文の5行が上から 0.05秒ずつ灯る', () => {
+      // 灯った行の絵（1行の点 6px ＋ 余白 24）。灯ったばかり（0.06秒）は hot の色の別の絵
+      const ROW_H = 6 + 24
+      expect(drawnAt(0.88, ROW_H)).toHaveLength(0)
+      expect(drawnAt(0.92, ROW_H)).toHaveLength(1)
+      const rows = [0.97, 1.02, 1.07, 1.12, 1.17].map((t) => drawnAt(t, ROW_H))
+      expect(rows.map((r) => r.length)).toEqual([2, 3, 4, 5, 6])
+      // 灯ったばかりの行は 0.06秒たつと灯った色の絵に替わる
+      expect(drawnAt(0.92, ROW_H)[0]).not.toBe(drawnAt(0.97, ROW_H)[0])
+      expect(drawnAt(1.3, ROW_H)).toHaveLength(6)
+    })
+
+    it('言葉は2行で、2行目の字は1行目の字の下に並ぶ', () => {
+      placed = []
+      player.drawAt(1.35)
+      // 灯った10字の置き場所（drawImage の x・y。1字の絵の高さは 43。下の言葉のテスト）。1行目の5字と2行目の5字は同じ x に並び、
+      // 2行目は下
+      const places = placed.filter((p) => p.img.height === 43)
+      expect(places).toHaveLength(10)
+      const first = places.slice(0, 5)
+      const second = places.slice(5)
+      expect(second.map((p) => p.x)).toEqual(first.map((p) => p.x))
+      for (const p of first) expect(p.y).toBe(first[0].y)
+      for (const p of second) expect(p.y).toBeGreaterThan(first[0].y)
+      // 行の間は字の大きさ（16px）の 1.5倍
+      expect(second[0].y - first[0].y).toBeCloseTo(24, 0)
+    })
+
+    it('言葉「世の中に、」「追いつく。」は 0.95秒から1字ずつ 0.035秒おきに灯る（灯ったばかりの字は明るい絵を重ねる）', () => {
+      // 1字の絵の高さ: 字の大きさ 16px（1.6 × 6 は 16 より小さいので 16。15 × 6 ÷ 5.4 より小さい）× 1.4 ＋ 余白 10 × 2 → 43
+      const CHAR_H = 43
+      expect(drawnAt(0.94, CHAR_H)).toHaveLength(0)
+      expect(drawnAt(0.96, CHAR_H)).toHaveLength(2)
+      expect(drawnAt(1.0, CHAR_H)).toHaveLength(3)
+      expect(drawnAt(1.35, CHAR_H)).toHaveLength(10)
+      // 潰れて線になる前に消える
+      expect(drawnAt(1.54, CHAR_H)).toHaveLength(0)
+    })
+  })
+})
+
+describe('新聞の点の絵（docs/SPEC.md の 14.2）', () => {
+  // prettier-ignore
+  const FOLDED = [
+    '#################',
+    '#...............#',
+    '#.#####.+++++++.#',
+    '#.#####.+++++++.#',
+    '#.#####.........#',
+    '#...............#',
+    '#.#############.#',
+    '#...............#',
+    ...Array.from({ length: 5 }, () => ['#.++++++.++++++.#', '#...............#']).flat(),
+    '#...............#',
+    '#################',
+  ]
+
+  it('折った新聞は 17列×20行（0列が折り目。題字は 2〜6列×2〜4行、見出しは 6行、2段の本文は 8〜16行の1行おき）', () => {
+    const { PAPER } = load()
+    expect(FOLDED).toHaveLength(20)
+    for (const row of FOLDED) expect(row).toHaveLength(17)
+    expect(PAPER.FOLDED).toEqual(FOLDED)
+  })
+
+  it('見開きは 33列×20行。外の枠と折り目（16列）が明るい点、右のページに記事の行（3行目が見出し、6〜14行目の1行おきが2段の本文）', () => {
+    const { PAPER } = load()
+    expect(PAPER.SPREAD).toHaveLength(20)
+    for (const row of PAPER.SPREAD) expect(row).toHaveLength(33)
+    expect(PAPER.LINE_ROWS).toEqual([3, 6, 8, 10, 12, 14])
+    expect(PAPER.HEAD_RUN).toEqual([18, 30])
+    expect(PAPER.BODY_RUNS).toEqual([
+      [18, 23],
+      [25, 30],
+    ])
+    const page = '.'.repeat(15)
+    expect(PAPER.SPREAD[0]).toBe('#'.repeat(33))
+    expect(PAPER.SPREAD[19]).toBe('#'.repeat(33))
+    // 見出しの点は灯るまで消えている点（'.'。ページの中と同じ見た目）、本文の点は淡い点（'+'。24列が段の間）
+    expect(PAPER.SPREAD[3]).toBe(`#${page}#${page}#`)
+    for (const r of [6, 8, 10, 12, 14]) expect(PAPER.SPREAD[r], `${r}`).toBe(`#${page}#.${'+'.repeat(6)}.${'+'.repeat(6)}.#`)
+    for (const r of [1, 2, 4, 5, 7, 9, 11, 13, 15, 16, 17, 18]) expect(PAPER.SPREAD[r], `${r}`).toBe(`#${page}#${page}#`)
+  })
+
+  it('1面が開く8コマ: 折った新聞を見開きの 16〜32列に重ね、1面が 16→11→6→2 列に縮み、左のページが 2→6→11→16 列で開く', () => {
+    const { PAPER } = load()
+    const { FRAMES, SPREAD } = PAPER
+    expect(FRAMES).toHaveLength(8)
+    const edge = (r: number) => r === 0 || r === 19
+    FRAMES.forEach((frame, f) => {
+      expect(frame).toHaveLength(20)
+      frame.forEach((row, r) => {
+        expect(row, `コマ${f + 1} ${r}行`).toHaveLength(33)
+        // 折り目（16列）は回る軸。どのコマでも明るい点のまま
+        expect(row.charAt(16), `コマ${f + 1} ${r}行`).toBe('#')
+      })
+    })
+    // コマ1 は折った新聞（1面の題字・見出し・本文は折っている時だけ）
+    expect(FRAMES[0]).toEqual(FOLDED.map((row) => ' '.repeat(16) + row))
+    // コマ2〜4: 1面の幅 w（縁は明るい点・中は淡い点）。隠れていない右のページはそのまま
+    ;[11, 6, 2].forEach((w, i) => {
+      FRAMES[i + 1].forEach((row, r) => {
+        const cover = edge(r) ? '#'.repeat(w) : `#${'+'.repeat(w - 2)}#`
+        expect(row, `1面 ${w} 列 ${r}行`).toBe(`${' '.repeat(16)}#${cover}${SPREAD[r].slice(17 + w)}`)
+      })
+    })
+    // コマ5〜7: 左のページが折り目から左へ w 列（外の縁は明るい点・中は消えている点）。右のページは全部見える
+    ;[2, 6, 11].forEach((w, i) => {
+      FRAMES[i + 4].forEach((row, r) => {
+        const leaf = edge(r) ? '#'.repeat(w) : `#${'.'.repeat(w - 1)}`
+        expect(row, `左のページ ${w} 列 ${r}行`).toBe(`${' '.repeat(16 - w)}${leaf}${SPREAD[r].slice(16)}`)
+      })
+    })
+    // コマ8 で見開き
+    expect(FRAMES[7]).toEqual(SPREAD)
+  })
+
+  it('点の間隔: 見開きが 横長の画面は幅の 62%・縦長は 88%、高さの半分に収まる（実ピクセルの整数）', () => {
+    const { paperPitch } = load()
+    // iPhone 14 の縦（ノッチ・ホームバーを除いて 390×763、dpr 3）: p ≈ 10.3px、見開きの幅 341px
+    const pd = paperPitch(390, 763, 3)
+    expect(pd).toBe(31)
+    expect((33 * pd) / 3).toBeCloseTo(341, 0)
+    // 縦長で高さが先に詰まる時
+    expect(paperPitch(1000, 1040, 1)).toBe(26)
+    // 横長（PC）: 高さで決まる時と幅で決まる時
+    expect(paperPitch(1280, 800, 2)).toBe(40)
+    expect(paperPitch(1000, 1000, 1)).toBe(Math.round((1000 * 0.62) / 33))
+    // 小さすぎる画面でも 2 より小さくしない
+    expect(paperPitch(20, 30, 1)).toBe(2)
+  })
+
+  it('言葉の字の大きさは max(1.6p, 16px)。ただし1行の5字が左のページ（15p）に収まるよう 15p ÷ 5.4 まで', () => {
+    const { textSize, TEXT_LINES } = load()
+    // 2行・1行に5字まで（字の大きさはこの字の数で決めている）
+    expect(TEXT_LINES).toEqual(['世の中に、', '追いつく。'])
+    for (const line of TEXT_LINES) expect(line.length).toBeLessThanOrEqual(5)
+    // iPhone 14 の縦: 16.5px（DS と同じ）
+    expect(textSize(31 / 3)).toBeCloseTo(16.53, 2)
+    expect(textSize(23)).toBeCloseTo(36.8, 6)
+    expect(textSize(9)).toBe(16)
+    expect(textSize(6)).toBe(16)
+    expect(textSize(5)).toBeCloseTo(75 / 5.4, 6)
+  })
+})
+
+describe('ロゴ「Topic Studio」（docs/SPEC.md の 14.2）', () => {
+  it('点の字: T・p・c を足し、o・i・S・t・u・d は NS・DS のまま。DS の D・a・r・y は使わない', () => {
+    const { GLYPHS } = load()
+    expect(GLYPHS.T).toEqual(['11111', '00100', '00100', '00100', '00100', '00100', '00100'])
+    expect(GLYPHS.p).toEqual(['00000', '00000', '11110', '10001', '11110', '10000', '10000'])
+    expect(GLYPHS.c).toEqual(['00000', '00000', '01110', '10000', '10000', '10001', '01110'])
+    expect(GLYPHS.o).toEqual(['00000', '00000', '01110', '10001', '10001', '10001', '01110'])
+    expect(GLYPHS.S).toEqual(['01111', '10000', '10000', '01110', '00001', '00001', '11110'])
+    expect(Object.keys(GLYPHS).sort()).toEqual(['S', 'T', 'c', 'd', 'i', 'o', 'p', 't', 'u'])
+    for (const g of Object.values(GLYPHS)) {
+      expect(g).toHaveLength(7)
+      for (const row of g) expect(row).toMatch(/^[01]{5}$/)
+    }
+  })
+
+  it('37列×18行の升目に Topic を (4, 1)、Studio を (1, 10) に置く（6列ずつ）', () => {
+    const { GLYPHS, logoLit } = load()
+    const lit = logoLit()
+    expect(lit).toHaveLength(37 * 18)
+    const expected = new Uint8Array(37 * 18)
+    const put = (text: string, col0: number, row0: number) =>
+      [...text].forEach((ch, q) =>
+        GLYPHS[ch].forEach((row, r) =>
+          [...row].forEach((v, b) => {
+            if (v === '1') expected[(row0 + r) * 37 + col0 + q * 6 + b] = 1
+          }),
+        ),
+      )
+    put('Topic', 4, 1)
+    put('Studio', 1, 10)
+    expect([...lit]).toEqual([...expected])
+    // T の左上（4列・1行）と、Studio の S の右上（5列・10行）
+    expect(lit[1 * 37 + 4]).toBe(1)
+    expect(lit[10 * 37 + 5]).toBe(1)
+    // 升目の外の列（0列・36列）と、2行の間（8・9行）には点を置かない
+    for (let r = 0; r < 18; r++) {
+      expect(lit[r * 37]).toBe(0)
+      expect(lit[r * 37 + 36]).toBe(0)
+    }
+    for (let c = 0; c < 37; c++) expect(lit[8 * 37 + c] + lit[9 * 37 + c]).toBe(0)
+  })
+})
+
+describe('起動アニメーション（boot）', () => {
+  it('Web 版の最初の読み込み: <html> の直下に画面いっぱいの重なりを出す（読み上げない・押せるものを置かない）', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ appearance: 'dark' }))
+    const api = load()
+    api.boot()
+    const el = overlay()!
+    expect(el.parentElement).toBe(document.documentElement)
+    expect(el.getAttribute('aria-hidden')).toBe('true')
+    expect(el.getAttribute('data-testid')).toBe('launch-overlay')
+    expect(el.getAttribute('data-launch-theme')).toBe('dark')
+    expect(el.getAttribute('data-launch-mode')).toBe('play')
+    expect(el.style.position).toBe('fixed')
+    // 地の色（アニメーションの最初の絵とほぼ同じ）はその場で出る
+    expect(el.style.background).toMatch(/#050607|rgb\(5, 6, 7\)/)
+    expect(sessionStorage.getItem('topic-studio:launched')).toBe('1')
+    expect(api.active()).toBe(true)
+    // 描く準備は HTML を読み終えた後。Worker を使えない所（ここ）ではページの中で描き、下ごしらえは最初の描画の時
+    expect(el.getAttribute('data-launch-renderer')).toBeNull()
+    t(0)
+    expect(el.getAttribute('data-launch-renderer')).toBe('page')
+    expect(draws).toBe(0)
+    t(16)
+    expect(el.querySelectorAll('canvas')).toHaveLength(1)
+    expect(draws).toBeGreaterThan(0)
+    expect(el.querySelector('a, button, input, [tabindex]')).toBeNull()
+  })
+
+  it('アニメーションが終わっても、アプリの知らせまでは消えない。知らせが来たら0.25秒で消えて取り除く', () => {
+    const api = load()
+    api.boot()
+    const el = overlay()!
+    t(16)
+    const canvas = el.querySelector('canvas')!
+    t(3000)
+    expect(el.style.opacity).toBe('1')
+    expect(el.getAttribute('data-launch-end')).toBeNull()
+    api.appReady()
+    expect(el.style.opacity).toBe('0')
+    expect(el.style.pointerEvents).toBe('none')
+    expect(el.getAttribute('data-launch-end')).toBe('done')
+    t(250)
+    expect(overlay()).toBeNull()
+    expect(api.active()).toBe(false)
+    // canvas の中身を手放す
+    expect(canvas.width).toBe(0)
+  })
+
+  it('アプリが先に知らせてきた時は、アニメーションが終わった所（約2.27秒）で消える', () => {
+    const api = load()
+    api.boot()
+    api.appReady()
+    t(1000)
+    expect(overlay()!.style.opacity).toBe('1')
+    // 描き始め（2回目の描画。32ms）から 2.27秒たつまでは消えない
+    t(1200)
+    expect(overlay()!.style.opacity).toBe('1')
+    expect(overlay()!.getAttribute('data-launch-end')).toBeNull()
+    t(300)
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('done')
+    t(250)
+    expect(overlay()).toBeNull()
+  })
+
+  it('押すとすぐ消え、アニメーションも止まる', () => {
+    const api = load()
+    api.boot()
+    t(300)
+    window.dispatchEvent(new Event('pointerdown'))
+    const el = overlay()!
+    expect(el.style.opacity).toBe('0')
+    expect(el.getAttribute('data-launch-end')).toBe('skip')
+    const before = draws
+    t(200)
+    expect(draws).toBe(before)
+    t(50)
+    expect(overlay()).toBeNull()
+  })
+
+  it('キーを押してもすぐ消える（下のアプリはすぐ押せる）', () => {
+    load().boot()
+    t(100)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('skip')
+    expect(overlay()!.style.pointerEvents).toBe('none')
+  })
+
+  describe('重なりを押した時（指のタップ・長押し）', () => {
+    const press = (target: EventTarget, type: string) => {
+      const e =
+        type === 'click'
+          ? new MouseEvent(type, { bubbles: true, cancelable: true })
+          : new Event(type, { bubbles: true, cancelable: true })
+      target.dispatchEvent(e)
+      return e
+    }
+    let appGot: string[]
+    const app = (e: Event) => appGot.push(e.type)
+    const PRESS = ['pointerup', 'pointercancel', 'touchend', 'mousedown', 'mouseup', 'click', 'contextmenu']
+    beforeEach(() => {
+      appGot = []
+      for (const type of PRESS) document.addEventListener(type, app)
+    })
+    afterEach(() => {
+      for (const type of PRESS) document.removeEventListener(type, app)
+    })
+
+    it('離すまでは押せるまま残し、押す操作の続き（離す・クリック）を止める。離して0.1秒で取り除く', () => {
+      load().boot()
+      t(300)
+      const el = overlay()!
+      press(el, 'pointerdown')
+      expect(el.getAttribute('data-launch-end')).toBe('skip')
+      expect(el.style.opacity).toBe('0')
+      // 指を離した後のクリックは、その時に指の下にある所へ送られる。重なりが押せないと、下のアプリが押されてしまう
+      expect(el.style.pointerEvents).not.toBe('none')
+      t(400)
+      expect(overlay()).toBe(el)
+      expect(press(el, 'pointerup').defaultPrevented).toBe(true)
+      // 指を離したのを止めると、そのタップのクリックは作られない
+      expect(press(el, 'touchend').defaultPrevented).toBe(true)
+      expect(press(el, 'mouseup').defaultPrevented).toBe(true)
+      expect(press(el.querySelector('canvas') ?? el, 'click').defaultPrevented).toBe(true)
+      expect(appGot).toEqual([])
+      t(99)
+      expect(overlay()).toBe(el)
+      t(1)
+      expect(overlay()).toBeNull()
+      // 取り除いた後は、アプリへの操作を止めない
+      const click = press(document.body, 'click')
+      expect(click.defaultPrevented).toBe(false)
+      expect(appGot).toEqual(['click'])
+    })
+
+    it('すぐ離した時は、離して0.1秒で押せなくなり、消え始めて0.25秒で取り除く', () => {
+      load().boot()
+      t(300)
+      const el = overlay()!
+      press(el, 'pointerdown')
+      press(el, 'pointerup')
+      press(el, 'click')
+      t(99)
+      expect(el.style.pointerEvents).not.toBe('none')
+      t(1)
+      expect(el.style.pointerEvents).toBe('none')
+      expect(overlay()).toBe(el)
+      t(150)
+      expect(overlay()).toBeNull()
+      expect(appGot).toEqual([])
+    })
+
+    it('押したまま（長押し）でも、消え始めて3秒で取り除く。長押しのメニューも止める', () => {
+      load().boot()
+      t(300)
+      const el = overlay()!
+      press(el, 'pointerdown')
+      t(1000)
+      expect(press(el, 'contextmenu').defaultPrevented).toBe(true)
+      t(1999)
+      expect(overlay()).toBe(el)
+      expect(el.style.pointerEvents).not.toBe('none')
+      t(1)
+      expect(overlay()).toBeNull()
+      expect(appGot).toEqual([])
+    })
+
+    it('重なりの外（消え始めた後の下のアプリ）への操作は止めない', () => {
+      load().boot()
+      t(300)
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
+      expect(press(document.body, 'click').defaultPrevented).toBe(false)
+      expect(press(document.body, 'pointerup').defaultPrevented).toBe(false)
+      expect(appGot).toEqual(['click', 'pointerup'])
+      t(250)
+      expect(overlay()).toBeNull()
+    })
+  })
+
+  it('アプリが知らせてこなくても、5秒で消える', () => {
+    load().boot()
+    t(4999)
+    expect(overlay()!.style.opacity).toBe('1')
+    t(1)
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('cap')
+    t(250)
+    expect(overlay()).toBeNull()
+  })
+
+  it('同じウインドウで読み込み直すと出さない。新しいウインドウ・タブ（sessionStorage が空）では出す', () => {
+    load().boot()
+    expect(overlay()).not.toBeNull()
+    overlay()!.remove()
+    load().boot()
+    expect(overlay()).toBeNull()
+    sessionStorage.clear()
+    load().boot()
+    expect(overlay()).not.toBeNull()
+  })
+
+  describe('見えていないタブ（裏で開いたタブ・ブラウザの先読み）で開いた時', () => {
+    const hide = () => Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    const show = () => delete (document as { visibilityState?: string }).visibilityState
+    const flag = () => sessionStorage.getItem('topic-studio:launched')
+    afterEach(show)
+
+    it('出さず、そのタブが見えた時に出したことにする（後の再読み込み・「新しい版にする」でも出さない）', () => {
+      hide()
+      load().boot()
+      expect(overlay()).toBeNull()
+      expect(flag()).toBeNull()
+      // まだ見えていない間は印を付けない
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(flag()).toBeNull()
+      show()
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(flag()).toBe('1')
+      load().boot()
+      expect(overlay()).toBeNull()
+    })
+
+    it('先読みしたページを開いた時（prerenderingchange）も、出したことにする', () => {
+      hide()
+      load().boot()
+      show()
+      document.dispatchEvent(new Event('prerenderingchange'))
+      expect(flag()).toBe('1')
+    })
+
+    it('見えないうちに読み込み直したら、新しいページが見えた時に印を付ける（前のページを開いた時の分は残らない）', () => {
+      hide()
+      load().boot()
+      load().boot()
+      show()
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(flag()).toBe('1')
+      load().boot()
+      expect(overlay()).toBeNull()
+    })
+
+    it('設定でオフ・テスト（強制していない）で出さない時は、見えても印を付けない（オンに戻した後・強制した時に出る）', () => {
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ launchAnimation: false }))
+      hide()
+      load().boot()
+      show()
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(flag()).toBeNull()
+
+      localStorage.clear()
+      setWebdriver(true)
+      hide()
+      load().boot()
+      show()
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(flag()).toBeNull()
+      localStorage.setItem('topic-studio:launch', 'force')
+      load().boot()
+      expect(overlay()).not.toBeNull()
+    })
+  })
+
+  it('設定でオフにすると出さない', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ appearance: 'white', launchAnimation: false }))
+    load().boot()
+    expect(overlay()).toBeNull()
+    expect(sessionStorage.getItem('topic-studio:launched')).toBeNull()
+  })
+
+  it('テスト（navigator.webdriver）では出さない。localStorage の topic-studio:launch = force か URL の launch=1 で出す', () => {
+    setWebdriver(true)
+    load().boot()
+    expect(overlay()).toBeNull()
+
+    localStorage.setItem('topic-studio:launch', 'force')
+    load().boot()
+    expect(overlay()).not.toBeNull()
+    overlay()!.remove()
+
+    localStorage.clear()
+    sessionStorage.clear()
+    window.history.replaceState(null, '', '/?launch=1#/settings')
+    load().boot()
+    expect(overlay()).not.toBeNull()
+  })
+
+  it('視差効果を減らす設定: 動かさずに最後の絵（ロゴ）を出し、描いてから0.5秒たってアプリの知らせもあれば消える', () => {
+    media({ reduced: true })
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ appearance: 'white' }))
+    const api = load()
+    api.boot()
+    const el = overlay()!
+    expect(el.getAttribute('data-launch-mode')).toBe('still')
+    expect(el.getAttribute('data-launch-theme')).toBe('light')
+    t(16)
+    const before = draws
+    expect(before).toBeGreaterThan(0)
+    api.appReady()
+    // ロゴを描いた（16）時から0.5秒（開いてから 516）
+    t(499)
+    expect(el.style.opacity).toBe('1')
+    expect(el.getAttribute('data-launch-end')).toBeNull()
+    // 動かさない（描き直さない）
+    expect(draws).toBe(before)
+    t(1)
+    expect(el.getAttribute('data-launch-end')).toBe('done')
+  })
+
+  it('canvas を使えない時は何も出さずに続ける（外観は決める）', () => {
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(null)
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ appearance: 'dark' }))
+    const api = load()
+    expect(api.boot()).toBe('dark')
+    expect(overlay()).toBeNull()
+    expect(api.active()).toBe(false)
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+    expect(sessionStorage.getItem('topic-studio:launched')).toBeNull()
+    // アプリの知らせは何もしない
+    api.appReady()
+  })
+
+  it('描く途中で失敗したら、その場で消える（アプリの起動の邪魔をしない）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const api = load()
+    api.boot()
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(null)
+    t(16)
+    expect(warn).toHaveBeenCalled()
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('skip')
+    t(250)
+    expect(overlay()).toBeNull()
+  })
+
+  it('出していない時のアプリの知らせは何もしない', () => {
+    setWebdriver(true)
+    const api = load()
+    api.boot()
+    expect(() => api.appReady()).not.toThrow()
+    expect(api.active()).toBe(false)
+  })
+})
+
+describe('ページの中で描く時（Worker を使えない古い・遅い端末）の見張り', () => {
+  // requestAnimationFrame はテストから好きな時刻で進める（コマの間隔を決めるため）
+  let queue: FrameRequestCallback[]
+  /** 次の描画を ts の時刻で呼ぶ */
+  const frameAt = (ts: number) => {
+    const q = queue
+    queue = []
+    q.forEach((cb) => cb(ts))
+  }
+  /** 開いて、描く準備（HTML を読み終えた後）までにする。次の frameAt で下ごしらえと最初の絵を描く */
+  function open() {
+    const api = load()
+    api.boot()
+    t(0)
+    expect(overlay()!.getAttribute('data-launch-renderer')).toBe('page')
+    return api
+  }
+  beforeEach(() => {
+    queue = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => queue.push(cb))
+  })
+
+  it('ふつうの速さなら最後まで動かす（見張りは何もしない）', () => {
+    const api = open()
+    api.appReady()
+    for (let ts = 16; ts <= 2400; ts += 16) frameAt(ts)
+    expect(overlay()!.getAttribute('data-launch-slow')).toBeNull()
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('done')
+  })
+
+  it('下ごしらえと最初の絵が重い（0.25秒を超える）と、動かさずにロゴを描き、0.5秒出して（アプリの知らせも待って）消える', () => {
+    const api = open()
+    drawCost = 0.5
+    frameAt(16)
+    expect(clockOffset).toBeGreaterThan(250)
+    const el = overlay()!
+    expect(el.getAttribute('data-launch-slow')).toBe('setup')
+    // 最後の絵（ロゴ）を描いた後は、次の描画を頼まない（アプリの起動にスレッドを空ける）
+    expect(queue).toHaveLength(0)
+    // 最後に描いたのは、視差効果を減らす時と同じ最後の絵（ロゴ・走査線の重ね）
+    const last = drawn.slice(-2).map((c) => [c.width, c.height])
+    drawCost = 0
+    const still = api.play(document.createElement('div'), 'light', { still: true })
+    expect(last).toEqual(drawn.slice(-2).map((c) => [c.width, c.height]))
+    still.dispose()
+    const before = draws
+    api.appReady()
+    t(499)
+    expect(el.getAttribute('data-launch-end')).toBeNull()
+    t(1)
+    expect(el.getAttribute('data-launch-end')).toBe('done')
+    expect(draws).toBe(before)
+    t(250)
+    expect(overlay()).toBeNull()
+  })
+
+  it('1コマが重い（0.05秒を超える）と、そのコマで動きをやめてロゴを描く', () => {
+    const api = open()
+    frameAt(16)
+    expect(queue).toHaveLength(1)
+    frameAt(32)
+    frameAt(48)
+    expect(overlay()!.getAttribute('data-launch-slow')).toBeNull()
+    drawCost = 30
+    frameAt(64)
+    expect(overlay()!.getAttribute('data-launch-slow')).toBe('frame')
+    expect(queue).toHaveLength(0)
+    api.appReady()
+    t(500)
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('done')
+  })
+
+  it('コマの間隔が長い（最初の5コマの真ん中の値が 0.05秒を超える）とロゴに飛ぶ。1・2コマだけ遅れたのは数えない', () => {
+    open()
+    frameAt(16)
+    // 間隔 80・90・70・100・60
+    for (const ts of [32, 112, 202, 272, 372]) frameAt(ts)
+    expect(overlay()!.getAttribute('data-launch-slow')).toBeNull()
+    frameAt(432)
+    expect(overlay()!.getAttribute('data-launch-slow')).toBe('gaps')
+    expect(queue).toHaveLength(0)
+
+    overlay()!.remove()
+    sessionStorage.clear()
+    open()
+    frameAt(16)
+    // 間隔 16・300・16・250・16
+    for (const ts of [32, 48, 348, 364, 614, 630]) frameAt(ts)
+    expect(overlay()!.getAttribute('data-launch-slow')).toBeNull()
+    expect(queue).toHaveLength(1)
+  })
+
+  it('重い1コマでタイマーが遅れても、出し始めから5秒を過ぎたコマで消し始め、もう描かない', () => {
+    open()
+    frameAt(16)
+    frameAt(32)
+    // タイマー（偽の時計）は 0.03秒しか進んでいないが、本当は5秒たった
+    clockOffset += 5000
+    const before = draws
+    frameAt(48)
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('cap')
+    expect(queue).toHaveLength(0)
+    frameAt(64)
+    expect(draws - before).toBeLessThan(40)
+  })
+
+  it('描く大きさの倍率は 2 まで（devicePixelRatio 3 の画面でも、canvas は CSS の大きさの2倍）', () => {
+    Object.defineProperty(window, 'devicePixelRatio', { value: 3, configurable: true })
+    try {
+      open()
+      frameAt(16)
+      // jsdom の大きさ 240×520
+      const cv = overlay()!.querySelector('canvas')!
+      expect([cv.width, cv.height]).toEqual([480, 1040])
+    } finally {
+      delete (window as { devicePixelRatio?: number }).devicePixelRatio
+    }
+  })
+
+  it('視差効果を減らす設定では見張らない（最後の絵を1回描くだけ）', () => {
+    media({ reduced: true })
+    const api = open()
+    drawCost = 0.5
+    frameAt(16)
+    expect(overlay()!.getAttribute('data-launch-slow')).toBeNull()
+    api.appReady()
+    t(500)
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('done')
+  })
+})
+
+describe('Worker（別のスレッド）で描く', () => {
+  interface Posted {
+    type: string
+    canvas?: unknown
+    size?: { width: number; height: number; dpr: number; safe: Record<string, number> }
+    theme?: string
+    still?: boolean
+  }
+  class FakeWorker {
+    static last: FakeWorker | null = null
+    posted: Posted[] = []
+    transfers: unknown[][] = []
+    terminated = false
+    onmessage: ((e: { data: unknown }) => void) | null = null
+    onerror: (() => void) | null = null
+    constructor(public url: string) {
+      FakeWorker.last = this
+    }
+    postMessage(data: Posted, transfer?: unknown[]) {
+      this.posted.push(data)
+      this.transfers.push(transfer ?? [])
+    }
+    terminate() {
+      this.terminated = true
+    }
+  }
+  const offscreen = { offscreen: true }
+
+  beforeEach(() => {
+    FakeWorker.last = null
+    vi.stubGlobal('Worker', FakeWorker)
+    vi.stubGlobal('OffscreenCanvas', function OffscreenCanvas() {})
+    Object.defineProperty(HTMLCanvasElement.prototype, 'transferControlToOffscreen', {
+      value: () => offscreen,
+      configurable: true,
+    })
+    URL.createObjectURL = vi.fn(() => 'blob:launch')
+    URL.revokeObjectURL = vi.fn()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    delete (HTMLCanvasElement.prototype as { transferControlToOffscreen?: unknown }).transferControlToOffscreen
+  })
+
+  it('canvas を Worker に渡して描かせ、ページの中では描かない', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ appearance: 'deep-dark' }))
+    load().boot()
+    t(0)
+    const el = overlay()!
+    expect(el.getAttribute('data-launch-renderer')).toBe('worker')
+    const worker = FakeWorker.last!
+    expect(worker.url).toBe('blob:launch')
+    expect(worker.posted[0]).toMatchObject({ type: 'start', canvas: offscreen, theme: 'deep', still: false })
+    expect(worker.posted[0].size).toMatchObject({ dpr: 1, safe: { top: 0, right: 0, bottom: 0, left: 0 } })
+    expect(worker.transfers[0]).toEqual([offscreen])
+    t(100)
+    expect(draws).toBe(0)
+  })
+
+  // 倍率 3 のまま Worker で描くと、CI の WebKit（ソフトウェアの描画）では最初の絵まで約1.5秒かかり、アニメーションの終わりより
+  // 先に5秒の期限が来ていた。点の絵なので 2 にしても見た目はほぼ変わらない
+  it('Worker で描く時も、描く大きさの倍率は 2 まで（ページの中で描く時と同じ）', () => {
+    Object.defineProperty(window, 'devicePixelRatio', { value: 3, configurable: true })
+    try {
+      load().boot()
+      t(0)
+      expect(FakeWorker.last!.posted[0].size).toMatchObject({ dpr: 2 })
+    } finally {
+      delete (window as { devicePixelRatio?: number }).devicePixelRatio
+    }
+  })
+
+  it('Worker が描き終わり、アプリが知らせたら消える。取り除く時に Worker を止める', () => {
+    const api = load()
+    api.boot()
+    t(0)
+    const worker = FakeWorker.last!
+    api.appReady()
+    t(1000)
+    expect(overlay()!.style.opacity).toBe('1')
+    worker.onmessage!({ data: { type: 'end' } })
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('done')
+    t(250)
+    expect(overlay()).toBeNull()
+    expect(worker.terminated).toBe(true)
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:launch')
+  })
+
+  it('視差効果を減らす設定: Worker がロゴを描いた（started）時から0.5秒出す（Worker の立ち上がりは数えない）', () => {
+    media({ reduced: true })
+    const api = load()
+    api.boot()
+    t(0)
+    const worker = FakeWorker.last!
+    expect(worker.posted[0]).toMatchObject({ type: 'start', still: true })
+    api.appReady()
+    // Worker の立ち上がりが遅い（遅い端末）
+    t(700)
+    expect(overlay()!.style.opacity).toBe('1')
+    worker.onmessage!({ data: { type: 'started' } })
+    t(499)
+    expect(overlay()!.style.opacity).toBe('1')
+    expect(overlay()!.getAttribute('data-launch-end')).toBeNull()
+    t(1)
+    expect(overlay()!.getAttribute('data-launch-end')).toBe('done')
+  })
+
+  it('押すと Worker の絵を止めて消える', () => {
+    load().boot()
+    t(0)
+    const worker = FakeWorker.last!
+    window.dispatchEvent(new Event('pointerdown'))
+    expect(worker.posted.map((m) => m.type)).toEqual(['start', 'stop'])
+    t(250)
+    expect(worker.terminated).toBe(true)
+  })
+
+  it('描く準備の前に押されたら、Worker を作らずに消える', () => {
+    load().boot()
+    window.dispatchEvent(new Event('pointerdown'))
+    t(0)
+    expect(FakeWorker.last).toBeNull()
+    t(250)
+    expect(overlay()).toBeNull()
+  })
+
+  it('Worker で描けなかったら、ページの中で描き直す', () => {
+    load().boot()
+    t(0)
+    const worker = FakeWorker.last!
+    worker.onerror!()
+    expect(worker.terminated).toBe(true)
+    const el = overlay()!
+    expect(el.getAttribute('data-launch-renderer')).toBe('page')
+    t(16)
+    expect(el.querySelectorAll('canvas')).toHaveLength(1)
+    expect(draws).toBeGreaterThan(0)
+  })
+
+  it('Worker のスクリプトはそれだけで動き、最後まで描いたら知らせる', () => {
+    const api = load()
+    let queue: ((ts: number) => void)[] = []
+    const posted: string[] = []
+    const scope = {
+      OffscreenCanvas: function (this: { width: number; height: number }, w: number, h: number) {
+        this.width = w
+        this.height = h
+        Object.assign(this, { getContext: fakeContext })
+      },
+      requestAnimationFrame: (cb: (ts: number) => void) => queue.push(cb),
+      cancelAnimationFrame: () => {},
+      postMessage: (m: { type: string }) => posted.push(m.type),
+      onmessage: null as null | ((e: { data: unknown }) => void),
+    }
+    // ページの window・document を使わない
+    new Function('self', 'window', 'document', api.workerSource())(scope, undefined, undefined)
+    const target = { width: 0, height: 0, getContext: fakeContext }
+    scope.onmessage!({
+      data: { type: 'start', canvas: target, size: { width: 360, height: 760, dpr: 2, safe: {} }, theme: 'dark' },
+    })
+    expect(posted).toEqual(['started'])
+    expect(target.width).toBe(720)
+    expect(draws).toBeGreaterThan(0)
+    for (let now = 16; now <= 2400; now += 16) {
+      if (now === 2240) expect(posted).toEqual(['started'])
+      const q = queue
+      queue = []
+      q.forEach((cb) => cb(now))
+    }
+    expect(posted).toEqual(['started', 'end'])
+  })
+})
