@@ -48,7 +48,7 @@ export const PWA_ICONS = [
 export const PWA_MANIFEST = {
   name: 'Topic Studio',
   short_name: 'Topic Studio',
-  // 説明の言葉は仮（作者に確かめる。docs/SPEC.md の 14.8）
+  // 説明の言葉は作者が確かめた（docs/SPEC.md の 14.6・14.8）
   description: '知っておきたい世の中の話題を、1日2回の版で',
   lang: 'ja',
   // アイコン（黒地にオレンジの点の「TS」）と起動アニメーションのダークの地の色（NS・DS と同じ黒）。ホーム画面から開いた時に
