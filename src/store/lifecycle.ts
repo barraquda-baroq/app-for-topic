@@ -1,14 +1,20 @@
-// 画面を閉じる・裏に回る・再読み込みする・アプリを更新する時の保存処理。DS の段階0の src/store/lifecycle.ts をそのまま写した物（DS は NS の物から）。
-// 端末の中の保存（NS の appStore の writeRecoveryJournal・flushNow）は段階1で足す。それまでは入力欄の下書きを反映するだけ
+// 画面を閉じる・裏に回る・再読み込みする・アプリを更新する時の保存処理。DS の src/store/lifecycle.ts から（DS は NS の物から）。
+// 段階1で、端末への保存（ストアの flushNow）と、送信待ちをすぐ送る（同期のエンジン）を足した（docs/SPEC.md の 7.8 の「部品」の
+// saveBeforeLeave）。DS の復旧用の控え（writeRecoveryJournal）は写さない（TS のアプリの記録は既読・知ってるだけで、保存を待つのは
+// 長くて 2秒。src/store/appStore.ts）
+import { uploadNow } from '../sync/controller'
+import { flushNow } from './appStore'
 import { flushAllDrafts } from './draftRegistry'
 
 /**
- * 入力欄の下書きをすべてストアへ反映し、まだ保存できていない変更の保存を始める（終わったら true）。
- * pagehide / visibilitychange(hidden) / アプリ更新の前に呼ぶ。
+ * 入力欄の下書きをすべてストアへ反映し、まだ保存できていない変更を端末に書き、送信待ちをすぐ送り始める。端末に書けたら true、
+ * 書けなかったら false（送るのは待たない）。pagehide / visibilitychange(hidden) / アプリ更新の前に呼ぶ。
  */
-export function saveBeforeLeave(): Promise<boolean> {
+export async function saveBeforeLeave(): Promise<boolean> {
   flushAllDrafts()
-  return Promise.resolve(true)
+  const saved = await flushNow()
+  uploadNow()
+  return saved
 }
 
 let installed = false

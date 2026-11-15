@@ -8,3 +8,27 @@
     display: none;
   }
 }
+
+/* ===== ヘッダーの同期の表示（docs/SPEC.md の 7.8 の8つ。src/ui/SyncIndicator.tsx。DS の src/ui/sync.css から、アイコンを外した物） =====
+   小さな字だけで控えめに出す。色は3段: そろっている＝--text-faint、送っている・未送信・受け取り中＝--text-muted、
+   オフライン・無料枠・要更新・同期できない＝--danger（DS の --overdue の代わり。TS は --overdue を持ち込まない）。
+   幅の狭い画面で長い言葉が入っても、ヘッダーからはみ出さずに省く */
+.sync-indicator {
+  display: block;
+  min-width: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 34px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sync-indicator.busy {
+  color: var(--text-muted);
+}
+
+.sync-indicator.warn {
+  color: var(--danger);
+}

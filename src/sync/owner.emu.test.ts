@@ -1,25 +1,13 @@
-// 持ち主の関所とアクセスルール（docs/SPEC.md の 14.4。形1）を、Firebase エミュレーターと本番のアクセスルール（firestore.rules）で
-// 確かめる。実行: npm run test:sync（DS の src/sync/upgrade.emu.test.ts と sync.emu.test.ts の「持ち主とアクセスルール」から）。
+// 持ち主の関所（docs/SPEC.md の 14.4。形1）を、Firebase エミュレーターと本番のアクセスルール（firestore.rules）で確かめる。
+// 実行: npm run test:sync（DS の src/sync/upgrade.emu.test.ts と sync.emu.test.ts の「持ち主とアクセスルール」から）。
+// アクセスルールの決まり（段階0の「ほかの場所は誰も読み書きできない」を段階1のルールに合わせて書き直した物）は
+// src/sync/rules.emu.test.ts（docs/SPEC.md の 7.7 の「ルールのテスト」）。
 // 本物の司令塔（src/sync/controller.ts）・持ち主の確かめ（src/sync/owner.ts）・保存先（Dexie。fake-indexeddb）を動かし、Firebase の部品
 // （src/sync/firebase.ts・firestore.ts）だけを、エミュレーターにつないだ物に差し替える。usingEmulator は false にして、公開した版と
 // 同じく持ち主を確かめさせる（開発サーバーをエミュレーターにつないだ時は確かめないため）。アカウントは作り物だけ
 import { deleteApp, initializeApp, type FirebaseApp } from 'firebase/app'
 import { GoogleAuthProvider, connectAuthEmulator, getAuth, signInWithCredential, type Auth } from 'firebase/auth'
-import {
-  collection,
-  connectFirestoreEmulator,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  initializeFirestore,
-  memoryLocalCache,
-  serverTimestamp,
-  setDoc,
-  terminate,
-  updateDoc,
-  type Firestore,
-} from 'firebase/firestore'
+import { connectFirestoreEmulator, initializeFirestore, memoryLocalCache, terminate, type Firestore } from 'firebase/firestore'
 import emuRules from '../../firestore.emu.rules?raw'
 import prodRules from '../../firestore.rules?raw'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -66,14 +54,12 @@ vi.mock('./firestore', () => ({
 let seq = 0
 const apps: FirebaseApp[] = []
 const stores: Persistence[] = []
-const extraFs: Firestore[] = []
 
 afterEach(async () => {
   resetSyncForTests()
   resetStoreForTests()
   for (const p of stores.splice(0)) p.close()
   if (fb.fs) await terminate(fb.fs)
-  for (const f of extraFs.splice(0)) await terminate(f)
   fb.fs = null
   fb.services = null
   for (const app of apps.splice(0)) await deleteApp(app)
@@ -240,51 +226,5 @@ describe('持ち主の関所（エミュレーター・本番のアクセスル�
     await waitFor(() => useSync.getState().owner === 'mismatch', 'ほかのアカウントの記録と分かる')
     expect(canShowData(useSync.getState())).toBe(false)
     expect(await q.getMeta('ownerSeen')).toBeNull()
-  })
-})
-
-describe('本番のアクセスルール（段階0。形1）', () => {
-  it('ログインしたアカウントは config/owner を読めるだけ。作る・書き換える・消すのは持ち主もできず、ほかの場所は誰も読み書きできない', async () => {
-    await useRules(prodRules)
-    await clearFirestore()
-    const owner = await signedInApp(account())
-    const stranger = await signedInApp(account())
-    const ofs = firestoreOf(owner.app)
-    const sfs = firestoreOf(stranger.app)
-    extraFs.push(ofs, sfs)
-
-    // 記録が無い時も、アプリからは作れない（持ち主になるはずのアカウントでも）
-    await expect(setDoc(doc(ofs, 'config', 'owner'), { uid: owner.uid, createdAt: serverTimestamp() })).rejects.toThrow()
-    expect(await adminExists('config/owner')).toBe(false)
-
-    await adminCreateOwner(owner.uid)
-    // 読める（持ち主もほかのアカウントも。持ち主かを確かめるため）
-    expect((await getDoc(doc(ofs, 'config', 'owner'))).data()?.uid).toBe(owner.uid)
-    expect((await getDoc(doc(sfs, 'config', 'owner'))).data()?.uid).toBe(owner.uid)
-    // 一覧は読めない
-    await expect(getDocs(collection(sfs, 'config'))).rejects.toThrow()
-    // 書き換える・消すのは、持ち主もほかのアカウントもできない
-    for (const fs of [ofs, sfs]) {
-      await expect(updateDoc(doc(fs, 'config', 'owner'), { uid: stranger.uid })).rejects.toThrow()
-      await expect(setDoc(doc(fs, 'config', 'owner'), { uid: stranger.uid, createdAt: serverTimestamp() })).rejects.toThrow()
-      await expect(deleteDoc(doc(fs, 'config', 'owner'))).rejects.toThrow()
-    }
-    expect((await getDoc(doc(ofs, 'config', 'owner'))).data()?.uid).toBe(owner.uid)
-    // ほかの場所（段階1のデータの場所・config のほかの文書）は、持ち主も読み書きできない
-    await expect(setDoc(doc(ofs, 'users', owner.uid, 'records', 'x'), { a: 1 })).rejects.toThrow()
-    await expect(getDoc(doc(ofs, 'users', owner.uid, 'records', 'x'))).rejects.toThrow()
-    await expect(getDoc(doc(ofs, 'config', 'connector'))).rejects.toThrow()
-    await expect(setDoc(doc(sfs, 'config', 'other'), { a: 1 })).rejects.toThrow()
-  })
-
-  it('ログインしていない時は config/owner も読めない', async () => {
-    await useRules(prodRules)
-    await clearFirestore()
-    await adminCreateOwner('someone')
-    const app = initializeApp({ projectId: EMU_PROJECT, apiKey: 'fake-api-key', authDomain: 'localhost' }, `anon-${++seq}`)
-    apps.push(app)
-    const fs = firestoreOf(app)
-    extraFs.push(fs)
-    await expect(getDoc(doc(fs, 'config', 'owner'))).rejects.toThrow()
   })
 })

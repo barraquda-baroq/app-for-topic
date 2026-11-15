@@ -15,6 +15,7 @@
     "e2e:tags": "node e2e/check-tags.mjs",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\"",
+    "seed:emu": "node scripts/seed-emulator.mjs",
     "test:sync": "firebase emulators:exec --config firebase.emu.json --only auth,firestore --project demo-topic-studio \"vitest run --config vitest.emu.config.ts\"",
     "deploy": "node scripts/deploy.mjs"
   },

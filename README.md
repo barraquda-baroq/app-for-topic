@@ -22,9 +22,10 @@ npm ci
 npm run dev           # http://localhost:5173 で起動
 npm run typecheck     # 型の確かめ
 npm test              # 単体テスト（Vitest。scripts/ のテストも）
-npm run test:sync     # 持ち主の関所とアクセスルールのテスト（Firebase エミュレーター。Java 21 以上）
+npm run test:sync     # 持ち主の関所・アクセスルール・同期のテスト（Firebase エミュレーター。Java 21 以上）
 npm run test:e2e      # E2E テスト（Playwright。PC・スマホ・タブレットの Chromium。E2E_WEBKIT=1 で iPhone 14 も）
-npm run test:e2e:sync # 持ち主の関所の E2E（Firebase エミュレーター）
+npm run test:e2e:sync # 持ち主の関所と同期の E2E（Firebase エミュレーター）
+npm run seed:emu -- --days 35  # 動いているエミュレーターに作り物の版を入れる（docs/DEPLOY.md の 7）
 npm run e2e:tags      # E2E のテストに端末の印（@pc・@s・@m・@ios）があるかの確かめ
 npm run build         # dist/ に本番ビルド（PWA）
 npm run format        # Prettier で整形

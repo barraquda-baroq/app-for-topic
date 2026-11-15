@@ -1,20 +1,133 @@
 rules_version = '2';
 
 // テスト（Firebase エミュレーター。firebase.emu.json）用のアクセスルール。DS の firestore.emu.rules と同じ役目。
-// 段階0は本番の firestore.rules と同じ中身（持ち主のデータがまだ無いので、外す持ち主の制限が無い）。段階1で、本番から持ち主の
-// 制限だけを外した形にする（エミュレーターにつないだ開発サーバーは、持ち主を確かめないため）。
-// 持ち主の関所のテスト（src/sync/owner.emu.test.ts・e2e/owner-gate.sync.spec.ts）は、本番の firestore.rules を読み込んで確かめる。
-// 持ち主の記録 config/owner は、テストが管理者の権限（Authorization: Bearer owner。ルールを通さない）で作る（src/test/emulatorAdmin.ts）。
-// 本番を変えた時はこちらも直す。
+// 本番の firestore.rules から、持ち主の制限だけを外した物（docs/SPEC.md の 7.7: isOwner(uid) を isSelf(uid) に替え、config/connector の
+// 「持ち主だけ」も外した。DS と同じ）。ほかの決まり（文書の形・表・id の形・json の上限・30日の削除）は本番と同じにする。
+// エミュレーターにつないだ開発サーバーは持ち主を確かめないので、エミュレーターに config/owner を作らなくてよい。同期のテストは、
+// テストごとに別のアカウントを使って互いのデータが混ざらないようにしている。
+// 持ち主の制限と本番のルールは、本番の firestore.rules を読み込んで確かめる（src/sync/rules.emu.test.ts・owner.emu.test.ts・
+// e2e/owner-gate.sync.spec.ts）。持ち主の記録 config/owner は、テストが管理者の権限（Authorization: Bearer owner。ルールを通さない）で
+// 作る（src/test/emulatorAdmin.ts）。本番とこちらが、持ち主の制限のほかで同じかは src/sync/rules.emu.test.ts が確かめる。
+// 本番を変えた時はこちらも直す（段階3で Claude 用のコネクタの部分を足す時も）。
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
       return request.auth != null;
     }
 
+    // 本番の isOwner(uid) から、持ち主の記録（config/owner）との照らし合わせを外した物
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // アプリ（持ち主）が書く記録の外側（7.7 の「1件の文書の形」）: DS の RecordDoc から分けた文書・復元の印を外した8つの欄で、
+    // 8つがそろっている事も確かめる（受け取る端末と段階3のコネクタが読めない文書を書かせない）。分けない（chunks は 0）・削除の印を
+    // 書かない（deleted は false。TS は日付で本当に消す）・Claude のふりをしない（device にコネクタの名前を使わない）。
+    // 文書の id と中身が合う事（{表名}:{id}）も確かめる（表を取り違えた文書や、Claude の記録の名札の上にアプリの記録を書かせない）
+    function appDoc(docId, tables, maxJson) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
+        && d.keys().hasAll(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
+        && d.table in tables
+        && d.id is string && d.id.size() >= 1 && d.id.size() <= 64
+        && docId == d.table + ':' + d.id
+        && d.json is string && d.json.size() <= maxJson
+        && d.chunks == 0
+        && d.deleted == false
+        && d.hash is string && d.hash.size() <= 64
+        && d.device is string && d.device.size() >= 1 && d.device.size() <= 64 && d.device != 'claude-connector'
+        && d.updated == request.time;
+    }
+
+    // 版の日付 D の記録は、日本時間の D＋30日 0時（= UTC の D＋30日 − 9時間）から消せる（7.8 の「30日で消す」）。
+    // サーバーの時刻で決めるので、端末の時計や境の計算の誤りで、30日の内の版を全端末から消さない（16.6 の 19）。
+    // id = 'YYYY-MM-DD-…'（呼ぶ前に expirableRecord・reads の形で確かめる）。日本は夏時間が無いので 9時間で数える
+    function expiredDay(id) {
+      let p = id.split('-');
+      return timestamp.date(int(p[0]), int(p[1]), int(p[2])) + duration.value(30, 'd') - duration.value(9, 'h') <= request.time;
+    }
+
+    // 30日で消せる records の id。表ごとの形だけ（7.7 の「名札」）: 版 = 枠だけ、話題・作れなかった印 = 枠＋8字、訂正 = 枠＋8字＋8字。
+    // 表を取り違えた形（版に8字が付く・話題に指紋が無い など）は消せない（段階3の connectorCreate と同じ形。16.6 の 25）。
+    // 辞書の束（termPacks）と「知ってる」（knownTerms）は消さない
+    function expirableRecord(docId) {
+      let ed = '20[0-9]{2}-[01][0-9]-[0-3][0-9]-(12|20)';
+      return docId.matches('^editions:' + ed + '$')
+        || docId.matches('^(topics|editionFails):' + ed + '-[0-9a-z]{8}$')
+        || docId.matches('^corrections:' + ed + '-[0-9a-z]{8}-[0-9a-z]{8}$');
+    }
+
     match /config/owner {
+      // 持ち主の記録は読むだけ（作る・書き換える・消すのは Firebase の画面＝管理者だけ。形1）
       allow get: if signedIn();
       allow create, update, delete: if false;
+    }
+
+    match /config/connector {
+      // Claude との連携と許可。段階1は持ち主が読めるだけ（無ければ連携していない）。段階3で NS の v2 の形（持ち主が作る・直す・消す、
+      // コネクタは自分の物を get）を足す（7.7 の「道の一覧」・「コネクタの認証のしかた」）。
+      // エミュレーターでは持ち主を確かめないので、ログインしたアカウントが読める（本番は持ち主だけ。DS と同じ）
+      allow get: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    // Claude が読める置き場（7.7）。アプリが作る・直すのは「知ってる」だけ（on の切り替え。語の id は t＋12字）。Claude の記録
+    // （版・話題・訂正・辞書の束・作れなかった印）はアプリから作れず、直せない（D21: 書き換えると、いつ開いたかが記録に出る）。
+    // 30日で消す版・話題・訂正・作れなかった印だけを消せる。削除は、文書がまだあるか無いかに関わらず通るよう、resource を見ずに
+    // 文書の id の形と日付で決める（ほかの端末が先に消していても、まとめての削除が落ちない）。
+    // 段階3で、read にコネクタ（読ませる表を並べる）を、create にコネクタの connectorCreate（作るだけ）を足す。update・delete は
+    // 段階1のまま（コネクタには無い）
+    match /users/{uid}/records/{docId} {
+      allow read: if isSelf(uid);
+      allow create, update: if isSelf(uid)
+        && appDoc(docId, ['knownTerms'], 2000)
+        && request.resource.data.id.matches('^t[0-9a-z]{12}$');
+      allow delete: if isSelf(uid)
+        && expirableRecord(docId)
+        && expiredDay(docId.split(':')[1]);
+    }
+
+    // Claude が読めない置き場（既読・見た版。D21・6.5・8.）。保存の機能は作らない（D10）ので、今は既読だけ（版1つに1記録。id は版の id）。
+    // 段階3でも、ここにはコネクタの文字を書かない（場所で分けて、問い合わせの書き方の誤りでも漏れないようにする。7.7）
+    match /users/{uid}/private/{docId} {
+      allow read: if isSelf(uid);
+      allow create, update: if isSelf(uid)
+        && appDoc(docId, ['reads'], 5000)
+        && request.resource.data.id.matches('^20[0-9]{2}-[01][0-9]-[0-3][0-9]-(12|20)$');
+      allow delete: if isSelf(uid)
+        && docId.matches('^reads:20[0-9]{2}-[01][0-9]-[0-3][0-9]-(12|20)$')
+        && expiredDay(docId.split(':')[1]);
+    }
+
+    // データの形の版（src/sync/appModel.ts。DS の validAppModel のまま）: データを書いたアプリの形の版。古い版のアプリは、これが自分より
+    // 高いと送らない。持ち主だけが書け、下げることはできない（戻したい時は、Firebase の画面でこの文書を消す）。
+    // 段階3で get にコネクタを足す（形の版が違えばコネクタは書かない。NS）
+    function validAppModel() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['model', 'appVersion', 'updatedAt'])
+        && d.keys().hasAll(['model', 'appVersion', 'updatedAt'])
+        && d.model is int && d.model >= 1
+        && d.appVersion is string && d.appVersion.size() <= 32
+        && d.updatedAt == request.time;
+    }
+
+    match /users/{uid}/meta/app {
+      allow get: if isSelf(uid);
+      allow create: if isSelf(uid) && validAppModel();
+      allow update: if isSelf(uid) && validAppModel()
+        && request.resource.data.model >= resource.data.model;
+    }
+
+    // 送る書き込みの印（src/sync/engine.ts。DS の sync/{deviceId} のまま）: 端末ごとに、その端末の記録を書く送るトランザクションが書く、
+    // そのトランザクションの id。返事を受け取れなかった書き込みが届いたかを、次の送信・受信で確かめる（7.8）。
+    // 持ち主だけが読み書きでき、形は { tx } だけ
+    match /users/{uid}/sync/{deviceId} {
+      allow get: if isSelf(uid);
+      allow create, update: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(['tx'])
+        && request.resource.data.tx is string
+        && request.resource.data.tx.size() >= 1 && request.resource.data.tx.size() <= 64
+        && deviceId.size() <= 64;
     }
 
     match /{document=**} {

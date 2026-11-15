@@ -4,7 +4,7 @@ import { defineConfig, devices } from '@playwright/test'
 // （DS の見本の画面の部分を外した。DS は NS の物から）。
 // 複数の作業を並行して走らせる時は E2E_PORT でポートを分ける。
 // 入っている Chromium を使う時は PW_CHROMIUM_PATH にその場所を入れる（@playwright/test の版と入っているブラウザの版が違う環境）。
-// 持ち主の関所のテスト（エミュレーターにつないだ開発サーバー）は playwright.sync.config.ts（npm run test:e2e:sync）。
+// 持ち主の関所と同期のテスト（エミュレーターにつないだ開発サーバー。*.sync.spec.ts）は playwright.sync.config.ts（npm run test:e2e:sync）。
 //
 // どの端末で流すかは、テストに付けた印（Playwright の tag）で決める（DS と同じ）:
 //   @pc  = PC 1400×900・マウス（desktop）       @s   = スマホ Pixel 7・指（mobile）
@@ -19,7 +19,7 @@ const chromium = process.env.PW_CHROMIUM_PATH ? { launchOptions: { executablePat
 
 /** 端末の印でテストを絞る（E2E_LIST_ALL=1 の時は絞らない） */
 const tagged = (tag: '@pc' | '@s' | '@m' | '@ios') => (process.env.E2E_LIST_ALL ? {} : { grep: new RegExp(`${tag}\\b`) })
-/** 持ち主の関所のテストは、ふつうの E2E では流さない */
+/** 持ち主の関所と同期のテスト（*.sync.spec.ts。エミュレーターが要る）は、ふつうの E2E では流さない */
 const IGNORE = ['**/*.sync.spec.ts']
 
 export default defineConfig({

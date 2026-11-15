@@ -1,8 +1,9 @@
 import { defineConfig, devices } from '@playwright/test'
 
-// 持ち主の関所の E2E テスト（docs/SPEC.md の 14.4・14.7）。Firebase エミュレーターにつなぐ開発サーバーで、ブラウザを動かす。
-// `npm run test:e2e:sync` で、エミュレーターを立ち上げてから実行する（DS の playwright.sync.config.ts から。段階0は
-// e2e/owner-gate.sync.spec.ts だけ。段階1で2つのブラウザでの同期のテストを同じ所に足す）。
+// 持ち主の関所と同期の E2E テスト（docs/SPEC.md の 14.4・14.7・16.3）。Firebase エミュレーターにつなぐ開発サーバーで、ブラウザを動かす。
+// `npm run test:e2e:sync` で、エミュレーターを立ち上げてから実行する（DS の playwright.sync.config.ts から）。流すのは e2e/*.sync.spec.ts:
+// 持ち主の関所（owner-gate.sync.spec.ts。段階0）と、作り物の版の受け取り・2つのブラウザの既読と「知ってる」（data.sync.spec.ts。段階1）。
+// エミュレーターにつないだ開発サーバーは、出典のリンクを作り物の社の一覧で決める（src/main.tsx。入る版は作り物の版だけのため）。
 // エミュレーターにつないだ開発サーバーはふだん持ち主を確かめないので、ここでは VITE_E2E_OWNER_LOCK=1（開発サーバーだけ。
 // src/sync/controller.ts）で本番と同じに確かめさせ、持ち主の記録 config/owner はテストが管理者の権限で作る
 // （src/test/emulatorAdmin.ts）。持ち主の記録は1つだけなので、テストは1つずつ流す。

@@ -1,6 +1,6 @@
 // アプリの外枠: ヘッダー、外観の反映、アプリの更新の帯、お知らせ（トースト）、ダイアログ。DS の src/ui/Layout.tsx から
-// （DS は NS の物から）。ヘッダー（docs/SPEC.md の 9.・14.5）: 左に TS のアイコンと名前、右に設定の歯車。
-// DS の［MIM］は持ち込まない。版の表示・同期の表示は後の段階（段階1・2）で足す
+// （DS は NS の物から）。ヘッダー（docs/SPEC.md の 9.・14.5）: 左に TS のアイコンと名前、右に同期の表示（段階1。src/ui/SyncIndicator.tsx。
+// docs/SPEC.md の 7.8）と設定の歯車。DS の［MIM］は持ち込まない。版の表示は段階2で足す
 import { useCallback, useEffect, useLayoutEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
@@ -9,6 +9,7 @@ import { saveBeforeLeave } from '../store/lifecycle'
 import { notifyError, resolveAppearance, THEME_COLORS, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
 import { DialogHost, cancelAllDialogs } from './dialogs'
 import { GearIcon, XIcon } from './icons'
+import { SyncIndicator } from './SyncIndicator'
 import './layout.css'
 
 /**
@@ -26,7 +27,8 @@ export function useGoBack(): () => void {
 
 /**
  * 各画面のヘッダー（ログインの画面では出さない）。actions にほかのボタンを渡すと、設定の歯車の左に並ぶ。
- * 左のアイコンと名前を押すとトップへ。幅 380px 未満では名前を出さない（src/ui/layout.css）
+ * 左のアイコンと名前を押すとトップへ。幅 380px 未満では名前を出さない（src/ui/layout.css）。同期の表示は右の歯車の並びの頭に出す
+ * （同期を始めるまでは何も出さない）
  */
 export function AppHeader({ actions }: { actions?: ReactNode }) {
   return (
@@ -36,6 +38,7 @@ export function AppHeader({ actions }: { actions?: ReactNode }) {
         <span className="brand-name">Topic Studio</span>
       </Link>
       <span className="spacer" />
+      <SyncIndicator />
       {actions}
       <Link to={paths.settings()} className="icon-btn" aria-label="設定" title="設定" data-testid="open-settings">
         <GearIcon />
@@ -84,8 +87,7 @@ export function UpdateBanner() {
   const apply = useAppUpdate((s) => s.apply)
   if (!ready || !apply) return null
   const update = async () => {
-    // 端末に保存できなかった時（容量が足りない・閉じられた）は読み込み直さない（画面の編集が消えないように。DS の段階1の直し。
-    // 段階0は保存する物が無いので、いつも切り替える）
+    // 端末に保存できなかった時（容量が足りない・閉じられた）は読み込み直さない（既読・知ってるの変更が消えないように。DS の段階1の直し）
     if (!(await saveBeforeLeave())) {
       notifyError('この端末に保存できなかったため、更新をやめました。少し待ってからもう一度押してください。')
       return

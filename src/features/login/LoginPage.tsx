@@ -1,15 +1,15 @@
 // ログインの画面（docs/SPEC.md の 14.4）: 最初にこの画面を出し、ログインしてから使う（ヘッダーは出さない）。DS の
-// src/features/login/LoginPage.tsx から、前に別のアカウントで使っていた端末の確かめ（段階1で足す）を外した物。
+// src/features/login/LoginPage.tsx から（前に別のアカウントで使っていた端末の確かめは、段階1で DS の物を足した。docs/SPEC.md の 7.8）。
 // 見た目は DS と同じ表紙の組み方: 画面いっぱいに --cover（外観ごとのグレー）の地、左寄せで等幅の「Topic Studio」、その下に今日の曜日と
 // 日付「SAT · 2026.11.14」、さらに下に［Google でログイン］。画面の左下に「TOPIC STUDIO  v0.1」。
 // iPhone をホーム画面のアプリでなく開いた時は、ホーム画面に追加してから使う案内と［追加の手順］を出す。iPhone は Chrome を基準にし
 // （DS の作者の指示）、案内の言葉は開いているブラウザ（Chrome・Safari。ほかは「ブラウザ」）の名前で出す。
 // Firebase の設定がまだ仮の値の時（docs/DEPLOY.md の手順で差し替える前）は、ログインを始めずに「まだ公開の準備ができていません」と出す。
-// ログインした後、持ち主を確かめている間（「確かめています…」）・持ち主の記録が無い・ほかのアカウントの記録の時は、この画面の中に
-// 文とボタンを出す（何も見えない）
+// ログインした後、持ち主を確かめている間（「確かめています…」）・持ち主の記録が無い・ほかのアカウントの記録の時と、この端末を前に
+// 別のアカウントで使っていた時は、この画面の中に文とボタンを出す（何も見えない）
 import { useEffect, useState } from 'react'
 import { coverDateLabel } from '../../domain/dates'
-import { canShowData, signIn, signOut, useSync } from '../../sync/controller'
+import { canShowData, confirmAccountSwitch, signIn, signOut, useSync } from '../../sync/controller'
 import { firebaseConfigIsPlaceholder } from '../../sync/firebaseConfig'
 import { APP_VERSION } from '../../sync/appVersion'
 import { OWNER_MISMATCH_MESSAGE, OWNER_MISSING_MESSAGE } from '../../sync/syncView'
@@ -27,6 +27,15 @@ export const OWNER_CHECKING_MESSAGE = '確かめています…'
 
 export const NOT_READY_MESSAGE = 'まだ公開の準備ができていません（docs/DEPLOY.md）'
 export const OFFLINE_MESSAGE = 'ネットにつながっていません。最初の1回はネットにつないでログインしてください。'
+
+/**
+ * この端末を前に別のアカウントで使っていた時の確かめの言葉（DS と同じ。TS の端末に入るアプリの記録は既読・知ってるなので、その名前で言う）。
+ * 間違えて別のアカウントを選んだ時に、この端末の既読・知ってるがそのアカウントへ写らないように、同期を始める前に聞く（docs/SPEC.md の 7.8）
+ */
+export function accountSwitchMessage(previousEmail: string): string {
+  const who = previousEmail ? `別のアカウント（${previousEmail}）` : '別のアカウント'
+  return `この端末は前に${who}で使っていました。このアカウントで同期すると、この端末の既読と「知ってる」がこのアカウントのクラウドと合わさります。`
+}
 
 /** iPhone の案内で呼ぶ、開いているブラウザのタブ（Chrome を基準にし、Safari で開いた時は Safari。ほかは「ブラウザ」） */
 const BROWSER_TAB: Record<IosBrowser, string> = { chrome: 'Chrome のタブ', safari: 'Safari のタブ', other: 'ブラウザのタブ' }
@@ -116,10 +125,11 @@ function LoginActions(props: {
   )
 }
 
-/** ログインした後、まだトップの画面を出せない時の文とボタン */
+/** ログインした後、まだトップの画面を出せない時の文とボタン（持ち主の確かめ・前に別のアカウントで使っていた端末の確かめ） */
 function SignedInGate({ online }: { online: boolean }) {
   const busy = useSync((s) => s.busy)
   const owner = useSync((s) => s.owner)
+  const mismatch = useSync((s) => s.accountMismatch)
   const email = useSync((s) => s.user?.email ?? '')
   const logout = (
     <button
@@ -139,6 +149,28 @@ function SignedInGate({ online }: { online: boolean }) {
           {owner === 'missing' ? OWNER_MISSING_MESSAGE : OWNER_MISMATCH_MESSAGE}
         </p>
         <div>{logout}</div>
+      </>
+    )
+  }
+  if (mismatch) {
+    return (
+      <>
+        <p className="login-note" role="status" data-testid="login-account-switch">
+          {accountSwitchMessage(mismatch.previousEmail)}
+        </p>
+        {email ? <p className="login-note">{email}</p> : null}
+        <div className="login-home-actions">
+          <button
+            type="button"
+            className="btn login-google"
+            onClick={() => void confirmAccountSwitch()}
+            disabled={busy}
+            data-testid="login-confirm-account"
+          >
+            このアカウントで同期する
+          </button>
+          {logout}
+        </div>
       </>
     )
   }

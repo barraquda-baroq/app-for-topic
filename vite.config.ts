@@ -117,7 +117,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     // scripts/ はスクリプトの部品のテスト（Node の環境。各ファイルの先頭の @vitest-environment node）
     include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
-    // 持ち主の関所とアクセスルールのテストは Firebase エミュレーターの中で動かす（npm run test:sync。docs/SPEC.md の 14.7）
+    // 持ち主の関所・アクセスルール・同期のテストは Firebase エミュレーターの中で動かす（npm run test:sync。docs/SPEC.md の 14.7・16.3）
     exclude: ['src/**/*.emu.test.ts', 'node_modules/**'],
   },
 })

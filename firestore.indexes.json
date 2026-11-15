@@ -1,1 +1,20 @@
-{ "indexes": [], "fieldOverrides": [] }
+{
+  "indexes": [
+    {
+      "collectionGroup": "records",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "table", "order": "ASCENDING" },
+        { "fieldPath": "updated", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "records", "fieldPath": "json", "indexes": [] },
+    { "collectionGroup": "records", "fieldPath": "hash", "indexes": [] },
+    { "collectionGroup": "records", "fieldPath": "device", "indexes": [] },
+    { "collectionGroup": "private", "fieldPath": "json", "indexes": [] },
+    { "collectionGroup": "private", "fieldPath": "hash", "indexes": [] },
+    { "collectionGroup": "private", "fieldPath": "device", "indexes": [] }
+  ]
+}

@@ -2,6 +2,9 @@
 // 履歴・指の操作の部分は外した）。開発サーバーでは window.__ts（src/main.tsx）からログインの状態などを使える。
 // アカウントは作り物だけを使う（個人の情報を入れない）
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import type { KnownTerm, ReadMark } from '../src/domain/types'
+import type { TestEditionsOptions, TestEditionsResult } from '../src/features/login/testAuth'
+import type { EditResult } from '../src/store/appStore'
 
 /**
  * 落ちた時の手がかりを残す（CI の WebKit でだけ時々ログインの画面が出ないことがあり、その時に何が起きていたかを見るため）。
@@ -98,8 +101,14 @@ export function collectDiagnosticsOnFailure(): void {
 export interface DevHook {
   /** エミュレーターにつないでいる時だけ: 仮のアカウントでログインする */
   signInForTest: (sub: string) => Promise<void>
-  /** 画面のテスト用: Firebase を使わずにログインした状態にする */
-  fakeSignIn: () => void
+  /** 画面のテスト用: Firebase を使わずにログインした状態にする（editions を渡すと、作り物の版も端末に入れ終えるまで待つ） */
+  fakeSignIn: (opts?: { editions?: TestEditionsOptions | true }) => Promise<TestEditionsResult | null> | undefined
+  /** 作り物の版を端末（Dexie）に入れる（受け取った物として。src/features/login/testAuth.ts の putFakeEditions） */
+  putFakeEditions: (opts?: TestEditionsOptions) => Promise<TestEditionsResult>
+  /** 段階1の既読: 話題を読んだにする（src/store/devActions.ts。画面の操作は段階2） */
+  markRead: (topicId: string) => EditResult<ReadMark>
+  /** 段階1の「知ってる」: 開いている版の話題の用語から、語を「知ってる」にする */
+  know: (termId: string) => EditResult<KnownTerm>
   /** ログインしているアカウント（持ち主の関所のテスト用） */
   syncUid: () => string | null
   /** 新しい版を受け取った時の帯（本物の UpdateBanner）を出す */
