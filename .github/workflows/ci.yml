@@ -56,11 +56,12 @@ jobs:
         run: npm run build
       # 公開するビルドに、テスト用の入口（ログインの印と作り物の版の印・開発用フック window.__ts とその関数・エミュレーターのプロジェクト名・
       # E2E で持ち主を確かめさせる VITE_E2E_OWNER_LOCK）と、作り物の版（src/test/fixtures/fakeEditions.ts。関数の名前は縮めると消えるので、
-      # 分けた部品のファイルの名前と作り物の記録の model も見る）・エミュレーターに入れる道具（scripts/seed-emulator.mjs・
-      # src/test/seedEmulator.ts）が残っていない（docs/SPEC.md の 16.3。ビルドした物で印を置いても効かないことは e2e/offline.spec.ts でも
-      # 確かめる）。[{,]know: は開発用フックの know の鍵（know だけだと unknown などに当たるため）
+      # 分けた部品のファイルの名前と作り物の記録の model も見る）・作り物の社の一覧（src/test/fixtures/fakeOutlets.ts。分けた部品の
+      # ファイルの名前・FAKE_OUTLETS などの名前と、作り物の社の名前も見る。入ると本物の社のリンクが作られなくなる）・エミュレーターに
+      # 入れる道具（scripts/seed-emulator.mjs・src/test/seedEmulator.ts）が残っていない（docs/SPEC.md の 16.3。ビルドした物で印を置いても
+      # 効かないことは e2e/offline.spec.ts でも確かめる）。[{,]know: は開発用フックの know の鍵（know だけだと unknown などに当たるため）
       - name: ビルドにテスト用の入口と作り物の版が無いことの確かめ
-        run: "! grep -rqE 'topic-studio:test-auth|topic-studio:test-editions|fakeSignIn|putFakeEditions|showUpdateBanner|__ts|markRead|[{,]know:|fakeEditions|makeFakeEdition|makeFakeMonth|fakeRecordsOf|FAKE_TOPIC_SCENES|fake-writer-model|fake-checker-model|seedEmulator|seed-emulator|demo-topic-studio|VITE_E2E_OWNER_LOCK' dist/"
+        run: "! grep -rqE 'topic-studio:test-auth|topic-studio:test-editions|fakeSignIn|putFakeEditions|showUpdateBanner|__ts|markRead|[{,]know:|fakeEditions|makeFakeEdition|makeFakeMonth|fakeRecordsOf|FAKE_TOPIC_SCENES|fakeOutlets|FAKE_OUTLET|〇〇通信|△△新聞|□□放送|◇◇日報|××ニュース|fake-writer-model|fake-checker-model|seedEmulator|seed-emulator|demo-topic-studio|VITE_E2E_OWNER_LOCK' dist/"
       # ふだんは1分半ほど。GitHub の機械が Ubuntu の置き場（archive.ubuntu.com）の名前を引けない時、apt が1つずつ待ち続けて
       # 30分の期限まで止まったことがある（DS の CI。2026-11-11）。1回を8分で打ち切り、1分おいてもう1回だけやり直す。
       # 打ち切っても、sudo の下の apt-get は残って dpkg の鍵を持ち続ける（2回目が「Could not get lock」で落ちた）ので、

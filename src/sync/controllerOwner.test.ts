@@ -3,21 +3,37 @@
 // 確かめの途中でアカウントが替わったら、前のアカウントの答えは捨てる。
 // Firebase・Firestore・持ち主の記録は仮の物（checkOwner の答えをテストが決める。止めておいて後で答えることもできる）、
 // 端末の中の保存（fake-indexeddb）は本物。
+// この端末で確かめたアカウントの照らし合わせは、段階1から同期のエンジンの claimOwner がする（docs/SPEC.md の 7.8 の controller.ts）。
+// エンジンは仮の物で、本物の claimOwner と同じに確かめて知らせる（同じ checkOwner の答えを使う。読んだ回数は司令塔と別に数える）。
 // DS の src/sync/controllerAccount.test.ts と同じ作り
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { EngineOptions, SyncEngine, SyncStatus } from './engine'
 
 type OwnerState = 'ok' | 'missing' | 'mismatch'
 type OwnerAnswer = OwnerState | 'offline'
 
-const h = vi.hoisted(() => ({
-  onUser: null as null | ((u: unknown) => void),
-  answer: 'ok' as OwnerAnswer,
-  checks: 0,
-  usingEmulator: false,
-  /** true の間は、checkOwner の答えを止めておく（held の resolve でテストが後から答える） */
-  hold: false,
-  held: [] as { uid: string; resolve: (a: OwnerState) => void }[],
-}))
+const h = vi.hoisted(() => {
+  const h = {
+    onUser: null as null | ((u: unknown) => void),
+    answer: 'ok' as OwnerAnswer,
+    /** 司令塔が持ち主の記録を読んだ回数 */
+    checks: 0,
+    /** 同期のエンジンが持ち主の記録を読んだ回数（claimOwner） */
+    engineChecks: 0,
+    usingEmulator: false,
+    /** true の間は、checkOwner の答えを止めておく（held の resolve でテストが後から答える） */
+    hold: false,
+    held: [] as { uid: string; by: 'controller' | 'engine'; resolve: (a: OwnerState) => void }[],
+    async check(uid: string, by: 'controller' | 'engine'): Promise<OwnerState> {
+      if (by === 'controller') h.checks += 1
+      else h.engineChecks += 1
+      if (h.hold) return new Promise<OwnerState>((resolve) => h.held.push({ uid, by, resolve }))
+      if (h.answer === 'offline') throw new Error('offline')
+      return h.answer
+    },
+  }
+  return h
+})
 
 vi.mock('./firebase', () => ({
   get usingEmulator() {
@@ -36,11 +52,52 @@ vi.mock('./firebase', () => ({
 }))
 vi.mock('./firestore', () => ({ firestore: () => ({}) }))
 vi.mock('./owner', () => ({
-  checkOwner: async (_fs: unknown, uid: string) => {
-    h.checks += 1
-    if (h.hold) return new Promise<OwnerState>((resolve) => h.held.push({ uid, resolve }))
-    if (h.answer === 'offline') throw new Error('offline')
-    return h.answer
+  checkOwner: (_fs: unknown, uid: string) => h.check(uid, 'controller'),
+}))
+vi.mock('./appModel', () => ({ DATA_MODEL: 1, APP_VERSION: '0.1', watchAppModel: () => () => {} }))
+// 同期のエンジン: 始めると本物の claimOwner（src/sync/engine.ts）と同じに持ち主を確かめ、記録が無い・ほかのアカウントなら止まって知らせる
+// （ほかのアカウントなら、この端末の持ち主の印を消す）。止めた後に届いた答えは知らせない
+vi.mock('./engine', () => ({
+  createSyncEngine: (opts: EngineOptions): SyncEngine => {
+    let status: SyncStatus = { phase: 'starting', pending: 0, lastSyncedAt: null, error: null }
+    let stopped = false
+    const set = (patch: Partial<SyncStatus>) => {
+      if (stopped) return
+      status = { ...status, ...patch }
+      opts.onStatus?.(status)
+    }
+    return {
+      get status() {
+        return status
+      },
+      start: async () => {
+        if (opts.ownerLock === false) return set({ phase: 'synced', downloaded: true })
+        let state: OwnerState
+        try {
+          state = await h.check(opts.uid, 'engine')
+        } catch {
+          return set({ phase: 'offline', error: 'オフライン', errorCode: 'offline' })
+        }
+        if (state === 'mismatch') {
+          if ((await opts.target.getMeta<string>('ownerSeen')) === opts.uid) await opts.target.setMeta('ownerSeen', null)
+          return set({ phase: 'error', error: 'ほかのアカウント', errorCode: 'owner-mismatch' })
+        }
+        if (state === 'missing') return set({ phase: 'error', error: '記録が無い', errorCode: 'owner-missing' })
+        await opts.target.setMeta('ownerSeen', opts.uid)
+        set({ phase: 'synced', downloaded: true })
+      },
+      stop: () => {
+        stopped = true
+      },
+      requestUpload: () => {},
+      flush: async () => {},
+      reanchor: () => {},
+      idle: async () => {},
+      maintain: async () => ({ deleted: {}, total: 0, capped: false, skipped: null }),
+      expireLocal: async () => null,
+      fetchTopics: async (ids: readonly string[]) => ({ found: [], missing: [...ids] }),
+      serverNow: () => null,
+    }
   },
 }))
 
@@ -57,6 +114,7 @@ afterEach(() => {
   p = null
   h.answer = 'ok'
   h.checks = 0
+  h.engineChecks = 0
   h.usingEmulator = false
   h.hold = false
   h.held = []
@@ -120,6 +178,8 @@ describe('持ち主の関所', () => {
     expect(seen.at(-1)).toBe(false)
     expect(useSync.getState()).toMatchObject({ owner: 'mismatch', ownerSeen: false })
     expect(await db.getMeta('ownerSeen')).toBeNull()
+    // 照らし合わせは同期のエンジンだけがする（司令塔とエンジンで2回読まない。docs/SPEC.md の 7.8 の controller.ts）
+    expect([h.checks, h.engineChecks]).toEqual([0, 1])
   })
 
   it('確かめたアカウントで記録が消えていた時はトップの画面のまま。記録が戻って表に戻ると ok', async () => {
@@ -133,6 +193,8 @@ describe('持ち主の関所', () => {
     noteAppVisible()
     await settle()
     expect(useSync.getState()).toMatchObject({ owner: 'ok', ownerSeen: true })
+    // 表に戻ると同期を始め直し、エンジンがもう一度確かめる（司令塔は読まない）
+    expect([h.checks, h.engineChecks]).toEqual([0, 2])
   })
 
   it('記録が無い間はログインの画面のまま。作者が記録を作ってから窓を選ぶと、読み込み直さずにトップの画面を出す', async () => {

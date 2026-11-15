@@ -6,12 +6,15 @@
 //   画面を出す。まだ確かめていないアカウントは、ネットで確かめてから（記録が無い・ほかのアカウントの記録なら、ログインの画面に文と
 //   ［ログアウト］）。記録が無い・ほかのアカウントの記録だった時は、画面が表に戻った・窓を選んだ・つながった時に確かめ直す（作者が
 //   Firebase の画面で持ち主の記録を作ってからアプリに戻ると、読み込み直さなくてもトップの画面が出る。recheckOwner）
-// - この端末で確かめたアカウントは、すぐにトップの画面を出し（電波が無くても開ける）、裏でクラウドの記録と照らし合わせる（段階0の
-//   confirmSeenOwner をそのまま生かす）。ほかのアカウントの記録になっていたら、覚えた印を消してログインの画面に戻す。同期のエンジンも
-//   始める時に持ち主を確かめ（claimOwner）、記録が無い時は同期だけを止めて、ヘッダーに「同期できません（持ち主の記録がまだありません）」
-//   （docs/SPEC.md の 7.8 の「持ち主」・14.8 の 4）。記録が戻ったと分かったら、同期を始め直す
+// - この端末で確かめたアカウントは、すぐにトップの画面を出し（電波が無くても開ける）、裏でクラウドの記録と照らし合わせる。段階1では
+//   照らし合わせを同期のエンジンの claimOwner に寄せた（docs/SPEC.md の 7.8 の「部品」の controller.ts。段階0は司令塔がしていた。14.4）。
+//   ほかのアカウントの記録になっていたら、エンジンが覚えた印を消し、司令塔がログインの画面に戻す。記録が無い時は同期だけを止めて、
+//   ヘッダーに「同期できません（持ち主の記録がまだありません）」（7.8 の「持ち主」・14.8 の 4）。表に戻った・窓を選んだ・つながった時に
+//   同期を始め直し、エンジンがもう一度確かめる（DS と同じ）
 // - この端末で前に別のアカウントと同期していた時は、同期を始める前に確かめる（DS の accountMismatch。ログインの画面に文と
-//   ［このアカウントで同期する］［ログアウト］。7.8 の「既読・知ってるを送る・受け取る」）
+//   ［このアカウントで同期する］［ログアウト］。7.8 の「既読・知ってるを送る・受け取る」）。前のアカウントを端末の DB から読めない時は、
+//   確かめられるまで同期を始めず、トップも出さない（閉じる側に倒す。少し後と、表に戻った・つながった時に読み直す）。エンジンも、確かめた
+//   印の無いまま別のアカウントの端末で始めると止まる（allowAccountSwitch。二重の守り）
 // - 同じ端末で複数の画面（タブ・ウィンドウ）を開いている時は、1つの画面だけが同期を受け持つ（Web Locks の topic-studio-sync）。
 //   画面どうしの知らせ（BroadcastChannel の topic-studio-sync-status）にデータの形の版（DATA_MODEL）を載せ、受け持つ画面が自分より新しい版の
 //   画面に気付いたら、同期をやめて受け持ちを譲る。受け持たない画面も、クラウドのデータの形の版が自分より低ければ上げる（DS と同じ）
@@ -63,6 +66,11 @@ export interface SyncState {
    * 選んだ時に、端末の既読・知ってるがそのアカウントへ写らないように。DS の accountMismatch）
    */
   accountMismatch: { previousEmail: string } | null
+  /**
+   * この端末で前に同期したアカウント（_meta の uid）を読めなかった。読めるまで同期を始めず、データを出さない（閉じる側に倒す。
+   * ログインの画面は「確かめています…」。docs/SPEC.md の 7.8・14.4）
+   */
+  accountUnknown: boolean
 }
 
 const initial: SyncState = {
@@ -75,6 +83,7 @@ const initial: SyncState = {
   busy: false,
   error: null,
   accountMismatch: null,
+  accountUnknown: false,
 }
 
 export const useSync = create<SyncState>(() => ({ ...initial }))
@@ -91,9 +100,9 @@ useSync.subscribe((s) => {
  * 確かめも済んでいる。DS の canShowData）
  */
 export function canShowData(
-  s: Pick<SyncState, 'auth' | 'owner' | 'ownerSeen'> & Partial<Pick<SyncState, 'accountMismatch'>>,
+  s: Pick<SyncState, 'auth' | 'owner' | 'ownerSeen'> & Partial<Pick<SyncState, 'accountMismatch' | 'accountUnknown'>>,
 ): boolean {
-  return s.auth === 'signedIn' && s.ownerSeen && s.owner !== 'mismatch' && !s.accountMismatch
+  return s.auth === 'signedIn' && s.ownerSeen && s.owner !== 'mismatch' && !s.accountMismatch && !s.accountUnknown
 }
 
 let booted: Promise<void> | null = null
@@ -160,6 +169,13 @@ let maintainTimer: ReturnType<typeof setTimeout> | null = null
 let maintainedDay: string | null = null
 /** 次の日本時間の 0時に、端末の中の30日の外を消すタイマー */
 let dayTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * 同期を始められなかった（エンジンを作る前・始める時に投げた）。表に戻った・つながった時に始め直す（「受け取り中…」のまま止まらない
+ * ように。docs/SPEC.md の 7.8 の8つの「同期できません（理由）」）
+ */
+let startFailed = false
+/** ログインの画面の［このアカウントで同期する］で、前に別のアカウントで同期していた端末をこのアカウントと同期してよいと確かめた */
+let switchConfirmedFor: string | null = null
 
 /**
  * エンジンが端末の中のデータを読み書きする口（src/sync/engine.ts の SyncTarget）。保存先（src/db/persistence.ts）をそのまま使い、
@@ -219,7 +235,14 @@ export function onTabMessage(data: TabMessage | null | undefined): void {
     if (leader && status) publishStatus(status)
     return
   }
-  if (!leader && data?.status) useSync.setState({ status: data.status })
+  if (leader || !data?.status) return
+  if (data.status.errorCode === 'owner-mismatch') {
+    // 受け持つ画面のエンジンが、ほかのアカウントが持ち主だと分かった（印はそのエンジンが消した）: この画面もデータを見えなくする
+    stopEngine()
+    useSync.setState({ owner: 'mismatch', ownerSeen: false })
+    return
+  }
+  useSync.setState({ status: data.status })
 }
 
 function publishStatus(status: SyncStatus): void {
@@ -271,6 +294,7 @@ function clearTimers(): void {
 
 function stopEngine(): void {
   generation += 1
+  startFailed = false
   stopModelWatch()
   engine?.stop()
   engine = null
@@ -344,6 +368,13 @@ function onEngineStatus(e: SyncEngine, status: SyncStatus): void {
     stopEngine()
     return
   }
+  if (status.errorCode === 'account-mismatch') {
+    // 司令塔の確かめを通らずに、前に別のアカウントで同期していた端末で始まった（エンジンが止めた。二重の守り）: ログインの画面に
+    // 確かめを出す（前のアカウントのメールのアドレスは、もう書き替わっているかもしれないので出さない）
+    stopEngine()
+    useSync.setState({ accountMismatch: { previousEmail: '' }, accountUnknown: false })
+    return
+  }
   if (status.errorCode === 'owner-missing') useSync.setState({ owner: 'missing' })
   else if (
     !status.errorCode &&
@@ -380,6 +411,8 @@ function startEngine(uid: string): void {
       uid,
       deviceId: id,
       target: storeTarget(p),
+      // ログインの画面で確かめた時だけ、前に別のアカウントで同期していた端末で始めてよい（docs/SPEC.md の 7.8）
+      allowAccountSwitch: switchConfirmedFor === uid,
       // エミュレーターにつないだ開発サーバーでは、持ち主の記録を確かめない（エミュレーターには config/owner が無い。
       // E2E の持ち主の関所の確かめの時は確かめる。skipsOwnerCheck）
       ownerLock: !skipsOwnerCheck(fb),
@@ -393,6 +426,7 @@ function startEngine(uid: string): void {
     scheduleDayChange()
     await e.start()
   }
+  const failed = (e: unknown) => noteStartFailed(token, e)
   const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
   if (locks?.request) {
     const released = new Promise<void>((resolve) => {
@@ -402,13 +436,42 @@ function startEngine(uid: string): void {
     void startModelWatch(uid, token).catch((e: unknown) => console.warn('データの形の版を見張れませんでした', e))
     void locks
       .request(LEADER_LOCK, async () => {
-        await run().catch(reportError)
+        await run().catch(failed)
         await released
       })
-      .catch(reportError)
+      .catch(failed)
   } else {
-    void run().catch(reportError)
+    void run().catch(failed)
   }
+}
+
+/**
+ * 同期を始められなかった（部品を読み込めない・端末の ID や保存先が無い・エンジンが始める時に投げた）: 同期の表示を「同期できません（理由）」
+ * にし、表に戻った・つながった時に始め直す（docs/SPEC.md の 7.8 の8つ）。エンジンの中の失敗は、エンジンが error にしてやり直す
+ */
+function noteStartFailed(token: number, e: unknown): void {
+  console.warn('同期を始められませんでした', e)
+  if (token !== generation) return
+  engine?.stop()
+  engine = null
+  setTopicFetcher(null)
+  startFailed = true
+  const status: SyncStatus = {
+    phase: 'error',
+    pending: useSync.getState().status?.pending ?? 0,
+    lastSyncedAt: null,
+    error: message(e),
+    errorCode: null,
+  }
+  useSync.setState({ status })
+  publishStatus(status)
+}
+
+/** 始められなかった同期を始め直す（表に戻った・つながった時） */
+function retryFailedStart(): void {
+  const s = useSync.getState()
+  if (!startFailed || faked || !s.user || !canShowData(s)) return
+  startEngine(s.user.uid)
 }
 
 /** 持ち主の記録が無くて止まった同期を、記録が戻ったと分かった時に始め直す（エンジンがもう一度確かめる） */
@@ -426,12 +489,20 @@ let ownerRetry: ReturnType<typeof setTimeout> | null = null
 let ownerToken = 0
 /** 確かめ直している途中（画面が表に戻った時と窓を選んだ時が重なっても、1回だけ読む） */
 let rechecking = false
-/** この端末で確かめたアカウントを、今回の起動ではまだクラウドの記録と照らし合わせられていない（通信できなかった） */
-let seenUnconfirmed = false
 
 function clearOwnerRetry(): void {
   if (ownerRetry) clearTimeout(ownerRetry)
   ownerRetry = null
+}
+
+/** 少し後に確かめ直す（通信できない・端末の DB を読めない時。つながった・表に戻った時にも確かめ直す） */
+function scheduleOwnerRetry(token: number): void {
+  if (token !== ownerToken) return
+  clearOwnerRetry()
+  ownerRetry = setTimeout(() => {
+    ownerRetry = null
+    retryOwnerCheck()
+  }, OWNER_RETRY_MS)
 }
 
 /** クラウドの持ち主の記録と照らし合わせる（通信できなければ投げる） */
@@ -459,17 +530,21 @@ async function rememberOwner(uid: string | null): Promise<void> {
   }
 }
 
-/** この端末で前に別のアカウントと同期していた時の、そのアカウント（_meta の uid・uidEmail。同じアカウント・初めての端末なら null） */
-async function previousAccount(uid: string): Promise<{ previousEmail: string } | null> {
+/**
+ * この端末で前に別のアカウントと同期していた時の、そのアカウント（_meta の uid・uidEmail。同じアカウント・初めての端末なら null）。
+ * 読めない時は 'unknown'（確かめずに同期を始めない。閉じる側に倒す。DS の previousAccount が投げるのと同じ。docs/SPEC.md の 7.8）
+ */
+async function previousAccount(uid: string): Promise<{ previousEmail: string } | null | 'unknown'> {
   try {
     const p = getPersistence()
-    const previous = await p?.getMeta<string>('uid')
+    if (!p) throw new Error('保存先が初期化されていません')
+    const previous = await p.getMeta<string>('uid')
     if (typeof previous !== 'string' || !previous || previous === uid) return null
-    const email = await p?.getMeta<string>('uidEmail')
+    const email = await p.getMeta<string>('uidEmail')
     return { previousEmail: typeof email === 'string' ? email : '' }
   } catch (e) {
     console.warn('この端末で前に同期したアカウントを読めませんでした', e)
-    return null
+    return 'unknown'
   }
 }
 
@@ -486,13 +561,20 @@ async function beginSync(user: SyncUser, token: number): Promise<void> {
 
 /**
  * 持ち主だと分かった後: 前に別のアカウントで使っていたら確かめ（同期を始めず、ログインの画面に確かめの文）、そうでなければ同期を始める。
- * トップの画面を出してよいことは、前に別のアカウントで使っていたかを読んでから1回で入れる（確かめる前に、トップが一瞬出ないように）
+ * トップの画面を出してよいことは、前に別のアカウントで使っていたかを読んでから1回で入れる（確かめる前に、トップが一瞬出ないように）。
+ * 読めない時は同期を始めず、トップも出さずに、少し後に読み直す
  */
 async function ownerConfirmed(user: SyncUser, token: number): Promise<void> {
-  const mismatch = await previousAccount(user.uid)
+  const previous = await previousAccount(user.uid)
   if (token !== ownerToken) return
-  useSync.setState({ owner: 'ok', ownerSeen: true, accountMismatch: mismatch })
-  if (mismatch) stopEngine()
+  if (previous === 'unknown') {
+    useSync.setState({ owner: 'ok', ownerSeen: true, accountMismatch: null, accountUnknown: true })
+    stopEngine()
+    scheduleOwnerRetry(token)
+    return
+  }
+  useSync.setState({ owner: 'ok', ownerSeen: true, accountMismatch: previous, accountUnknown: false })
+  if (previous) stopEngine()
   else await beginSync(user, token)
 }
 
@@ -523,10 +605,18 @@ function installHooks(): void {
     })
   }
   if (typeof window !== 'undefined') {
-    window.addEventListener('online', () => retryOwnerCheck())
+    window.addEventListener('online', () => {
+      retryOwnerCheck()
+      retryFailedStart()
+    })
     // PC で Firebase の画面とアプリを別の窓で並べている時は、画面が裏に回らないので、窓を選んだ時にも確かめ直す
     window.addEventListener('focus', () => void recheckOwner())
   }
+}
+
+/** 画面どうしの知らせ（topic-studio-sync-status）を開き、受け持つ画面に今の状態を頼む（起動のたび。テストでは閉じて開き直す） */
+function openStatusChannel(): void {
+  if (statusChannel) return
   try {
     statusChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(STATUS_CHANNEL)
     if (statusChannel) {
@@ -556,6 +646,7 @@ export function noteAppVisible(): void {
   hiddenAt = 0
   if (since && Date.now() - since > REANCHOR_AFTER_MS) engine?.reanchor()
   onDayMaybeChanged()
+  retryFailedStart()
   void recheckOwner()
 }
 
@@ -578,34 +669,11 @@ function retryOwnerCheck(): void {
 }
 
 /**
- * この端末で確かめたアカウント: トップの画面は出したまま、クラウドの記録と照らし合わせる（段階0のまま。エンジンも始める時に確かめる）。
- * ほかのアカウントの記録になっていたら、同期を止め、覚えた印を消してログインの画面に戻す。記録が無い（消された）時は、トップの画面の
- * まま（同期はエンジンが止める）。記録が戻っていたら、止まっていた同期を始め直す。通信できない時は、次に表に戻った・窓を選んだ・
- * つながった時に照らし合わせる
- */
-async function confirmSeenOwner(user: SyncUser, token: number): Promise<void> {
-  try {
-    const state = await checkNow(user.uid)
-    if (token !== ownerToken) return
-    seenUnconfirmed = false
-    if (state === 'mismatch') {
-      stopEngine()
-      await rememberOwner(null)
-      if (token === ownerToken) useSync.setState({ owner: 'mismatch', ownerSeen: false })
-      return
-    }
-    if (state !== useSync.getState().owner) useSync.setState({ owner: state })
-    if (state === 'ok') restartIfOwnerStopped(user)
-  } catch (e) {
-    console.warn('持ち主を確かめられませんでした', e)
-  }
-}
-
-/**
  * 持ち主を確かめ直す（画面が表に戻った・窓を選んだ・つながった時）。持ち主の記録が無い・ほかのアカウントの記録だった時は、
  * 作者が Firebase の画面で持ち主の記録を作ってからアプリに戻ると、読み込み直さなくてもトップの画面が出る。確かめている間も、
- * ログインの画面の今の文は出したまま（「確かめています…」に替えない）。この端末で確かめたアカウントは、まだクラウドと照らし合わせられて
- * いない時と、記録が無かった時に照らし合わせる
+ * ログインの画面の今の文は出したまま（「確かめています…」に替えない）。この端末で確かめたアカウントの照らし合わせは同期のエンジンの
+ * claimOwner がするので（docs/SPEC.md の 7.8 の controller.ts）、記録が無くて止まった同期を始め直すだけ（エンジンがもう一度確かめる。
+ * DS と同じ）。前に同期したアカウントを読めなかった時は、読み直す
  */
 export async function recheckOwner(): Promise<void> {
   const s = useSync.getState()
@@ -613,13 +681,16 @@ export async function recheckOwner(): Promise<void> {
   if (faked || rechecking || s.auth !== 'signedIn' || !user) return
   const token = ownerToken
   if (s.ownerSeen) {
-    if (!seenUnconfirmed && s.owner !== 'missing') return
-    rechecking = true
-    try {
-      await confirmSeenOwner(user, token)
-    } finally {
-      rechecking = false
+    if (s.accountUnknown) {
+      rechecking = true
+      try {
+        await ownerConfirmed(user, token)
+      } finally {
+        rechecking = false
+      }
+      return
     }
+    restartIfOwnerStopped(user)
     return
   }
   if (s.owner !== 'missing' && s.owner !== 'mismatch') return
@@ -642,7 +713,7 @@ export async function recheckOwner(): Promise<void> {
 
 /**
  * ログインしたアカウントが持ち主か確かめてから、同期を始める。この端末で前に持ち主だと確かめたアカウントなら、すぐにトップの画面を出して
- * 同期を始め、裏でクラウドの記録と照らし合わせる
+ * 同期を始める（クラウドの記録との照らし合わせは、同期のエンジンの claimOwner がする。docs/SPEC.md の 7.8 の controller.ts）
  */
 async function verifyOwner(user: SyncUser): Promise<void> {
   const token = ++ownerToken
@@ -657,10 +728,7 @@ async function verifyOwner(user: SyncUser): Promise<void> {
   const seen = await readSeen(user.uid)
   if (token !== ownerToken) return
   if (seen) {
-    seenUnconfirmed = true
     await ownerConfirmed(user, token)
-    if (token !== ownerToken) return
-    await confirmSeenOwner(user, token)
     return
   }
   useSync.setState({ owner: 'checking', ownerSeen: false })
@@ -670,17 +738,12 @@ async function verifyOwner(user: SyncUser): Promise<void> {
     if (state === 'ok') {
       await rememberOwner(user.uid)
       if (token !== ownerToken) return
-      seenUnconfirmed = false
       await ownerConfirmed(user, token)
     } else useSync.setState({ owner: state, ownerSeen: false })
   } catch (e) {
     // 通信できない: 「確かめています…」のまま、つながったら・少し後で確かめ直す
     console.warn('持ち主を確かめられませんでした', e)
-    if (token !== ownerToken) return
-    ownerRetry = setTimeout(() => {
-      ownerRetry = null
-      retryOwnerCheck()
-    }, OWNER_RETRY_MS)
+    scheduleOwnerRetry(token)
   }
 }
 
@@ -692,6 +755,7 @@ function reportError(e: unknown): void {
 function boot(): Promise<void> {
   booted ??= (async () => {
     installHooks()
+    openStatusChannel()
     // 画面のテスト用にもうログインした状態にしてあれば、その状態を上書きしない（確かめている間も 'signedIn' のまま）
     if (!faked) useSync.setState({ auth: 'checking' })
     try {
@@ -711,7 +775,8 @@ function boot(): Promise<void> {
             // この端末で持ち主だと確かめたアカウントかを先に読む（起動のたびにログインの画面が一瞬出ないように、ログインした状態と
             // 一緒に入れる）。前に別のアカウントで使っていた端末なら、その確かめも一緒に入れる（トップが一瞬出ないように）
             const seen = skipsOwnerCheck(fb) || (await readSeen(u.uid))
-            const mismatch = seen ? await previousAccount(u.uid) : null
+            // 読めない時は、確かめられるまでトップを出さない（閉じる側に倒す。verifyOwner の中で読み直す）
+            const previous = seen ? await previousAccount(u.uid) : null
             if (token !== ownerToken || faked) return
             useSync.setState({
               auth: 'signedIn',
@@ -719,16 +784,24 @@ function boot(): Promise<void> {
               error: null,
               owner: seen ? 'ok' : 'checking',
               ownerSeen: seen,
-              accountMismatch: mismatch,
+              accountMismatch: previous === 'unknown' ? null : previous,
+              accountUnknown: previous === 'unknown',
             })
             await verifyOwner(u)
           })().catch(reportError)
         } else {
           ownerToken += 1
           clearOwnerRetry()
-          seenUnconfirmed = false
+          switchConfirmedFor = null
           stopEngine()
-          useSync.setState({ auth: 'signedOut', user: null, owner: 'unknown', ownerSeen: false, accountMismatch: null })
+          useSync.setState({
+            auth: 'signedOut',
+            user: null,
+            owner: 'unknown',
+            ownerSeen: false,
+            accountMismatch: null,
+            accountUnknown: false,
+          })
         }
       })
     } catch (e) {
@@ -768,6 +841,7 @@ export async function confirmAccountSwitch(): Promise<void> {
   const p = getPersistence()
   if (!user || !p) return
   await p.setMeta('uidEmail', user.email)
+  switchConfirmedFor = user.uid
   useSync.setState({ accountMismatch: null })
   startEngine(user.uid)
 }
@@ -795,7 +869,14 @@ export async function signOut(): Promise<void> {
   try {
     if (faked) {
       faked = false
-      useSync.setState({ auth: 'signedOut', user: null, owner: 'unknown', ownerSeen: false, accountMismatch: null })
+      useSync.setState({
+        auth: 'signedOut',
+        user: null,
+        owner: 'unknown',
+        ownerSeen: false,
+        accountMismatch: null,
+        accountUnknown: false,
+      })
       return
     }
     // 送れるものは送ってからログアウトする（送れなくても端末の中には残り、次にログインした時に送る）
@@ -827,7 +908,15 @@ export function fakeSignInForTest(user: SyncUser = { uid: 'test-user', name: '�
   ownerToken += 1
   clearOwnerRetry()
   stopEngine()
-  useSync.setState({ auth: 'signedIn', user, owner: 'ok', ownerSeen: true, accountMismatch: null, error: null })
+  useSync.setState({
+    auth: 'signedIn',
+    user,
+    owner: 'ok',
+    ownerSeen: true,
+    accountMismatch: null,
+    accountUnknown: false,
+    error: null,
+  })
 }
 
 /** テスト用 */
@@ -843,6 +932,8 @@ export function resetSyncForTests(): void {
   ownerToken += 1
   clearOwnerRetry()
   rechecking = false
-  seenUnconfirmed = false
+  switchConfirmedFor = null
+  statusChannel?.close()
+  statusChannel = null
   useSync.setState({ ...initial })
 }

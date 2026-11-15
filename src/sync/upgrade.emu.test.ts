@@ -6,8 +6,9 @@
 // 本物の司令塔（src/sync/controller.ts）・保存先（src/db/persistence.ts。fake-indexeddb）・同期のエンジン（src/sync/engine.ts）を動かし、
 // Firebase の部品（src/sync/firebase.ts・firestore.ts）だけを、エミュレーターにつないだ物に差し替える（src/sync/owner.emu.test.ts と同じ）。
 // usingEmulator は false にして、公開した版と同じく持ち主を確かめさせる。
-// 司令塔がエンジンを動かすのは段階1の 6（16.2）なので、ここでは司令塔で「ログインし直さずにトップを出す」所までを確かめ、エンジンは、
-// 司令塔が使うのと同じログイン済みの Firebase と同じ保存先で、このテストが動かす（司令塔がエンジンを動かすようになったら、司令塔の道に替える）。
+// 同期は司令塔が始めるエンジン（ownerSeen → ownerConfirmed → beginSync → startEngine。持ち主の記録が戻った時は表に戻って始め直す）で
+// 確かめる。テストはエンジンを作らない（同じ端末にエンジンが2つにならない。アプリでは Web Locks で1つ）。同期の状態は司令塔の状態
+// （useSync の status）とヘッダーの同期の表示（useSyncView）で見て、「知ってる」はストアの know で押す。
 // アカウントと記録はすべて作り物（公開のリポジトリ。docs/SPEC.md の 3.）
 import { deleteApp, initializeApp, type FirebaseApp } from 'firebase/app'
 import { GoogleAuthProvider, connectAuthEmulator, getAuth, signInWithCredential, type Auth } from 'firebase/auth'
@@ -20,7 +21,7 @@ import { createPersistence, V1_SCHEMA, V2_ADDED, type Persistence } from '../db/
 import { termIdOf } from '../domain/ids'
 import { jstDateOf } from '../domain/jst'
 import { pressKnownTerm } from '../domain/known'
-import { initStore, resetStoreForTests } from '../store/appStore'
+import { flushNow, initStore, know, resetStoreForTests } from '../store/appStore'
 import {
   adminCreateOwner,
   adminDocIds,
@@ -32,10 +33,10 @@ import {
   type AdminRecordDoc,
 } from '../test/emulatorAdmin'
 import { fakeRecordsOf, makeFakeEdition } from '../test/fixtures/fakeEditions'
-import { APP_VERSION, DATA_MODEL } from './appModel'
 import { encodeRecord, type Rec } from './codec'
-import { canShowData, initSync, resetSyncForTests, useSync, whenAuthKnown } from './controller'
-import { createSyncEngine, OWNER_MISSING_MESSAGE, SENT_MARKS, type SyncEngine } from './engine'
+import { canShowData, initSync, noteAppVisible, resetSyncForTests, syncNow, useSync, whenAuthKnown } from './controller'
+import { OWNER_MISSING_MESSAGE, SENT_MARKS } from './engine'
+import { useSyncView } from './syncView'
 
 /** 司令塔が使う Firebase（ログインとクラウドの保存先）。テストごとに、エミュレーターにつないだアプリを入れる */
 const fb = vi.hoisted(() => ({
@@ -83,10 +84,8 @@ class StageZeroDB extends Dexie {
 let seq = 0
 const apps: FirebaseApp[] = []
 const stores: Persistence[] = []
-const engines: SyncEngine[] = []
 
 afterEach(async () => {
-  for (const e of engines.splice(0)) e.stop()
   resetSyncForTests()
   resetStoreForTests()
   for (const p of stores.splice(0)) p.close()
@@ -126,8 +125,14 @@ async function stageZeroDevice(name: string, ownerSeen: string): Promise<void> {
   v1.close()
 }
 
-/** 段階1の版のアプリを開く（端末の中の保存先を開き、ログインの状態を確かめ始める。src/main.tsx と同じ順）。最初のログインの状態も返す */
-async function openApp(name: string): Promise<{ p: Persistence; firstSignedIn: boolean | null }> {
+/**
+ * 段階1の版のアプリを開く（端末の中の保存先を開き、ログインの状態を確かめ始める。src/main.tsx と同じ順）。最初のログインの状態も返す。
+ * beforeSync は、保存先とストアを開いた後、司令塔を始める前に呼ぶ（同期で届く前の端末を確かめる）
+ */
+async function openApp(
+  name: string,
+  beforeSync?: (p: Persistence) => Promise<void>,
+): Promise<{ p: Persistence; firstSignedIn: boolean | null }> {
   let firstSignedIn: boolean | null = null
   const off = useSync.subscribe((s) => {
     if (s.auth === 'signedIn' && firstSignedIn === null) firstSignedIn = canShowData(s)
@@ -135,28 +140,17 @@ async function openApp(name: string): Promise<{ p: Persistence; firstSignedIn: b
   const p = createPersistence(name)
   stores.push(p)
   await initStore(p)
+  await beforeSync?.(p)
   await initSync()
   await whenAuthKnown()
   off()
   return { p, firstSignedIn }
 }
 
-/** 同期を始める（司令塔が使うのと同じログイン済みの Firebase と保存先で。ログインし直さない） */
-async function startEngine(p: Persistence, uid: string): Promise<SyncEngine> {
-  if (!fb.fs) throw new Error('テストの Firestore がまだありません')
-  const engine = createSyncEngine({
-    firestore: fb.fs,
-    uid,
-    deviceId: 'stage0-pc',
-    target: p,
-    uploadDelay: 10,
-    uploadMaxWait: 50,
-    ownerLock: true,
-    appModel: { model: DATA_MODEL, appVersion: APP_VERSION },
-  })
-  engines.push(engine)
-  await engine.start()
-  return engine
+/** 司令塔のエンジンがクラウドとそろった（最初の受け取りが終わり、同期済み。ヘッダーの同期の表示も「同期済み」） */
+const synced = () => {
+  const st = useSync.getState().status
+  return st?.downloaded === true && st.phase === 'synced' && useSyncView.getState().view?.kind === 'synced'
 }
 
 async function waitFor<T>(fn: () => Promise<T | undefined | null | false> | T, label: string, timeout = 20_000): Promise<T> {
@@ -212,20 +206,21 @@ describe('段階0から段階1の版に上がった作者の端末（エミュ�
     // 段階1の版を開く（Firebase はログインの状態を覚えたまま。ログインの画面のボタンを押さない）
     useAuthor(author)
     const signedInAs = author.auth.currentUser
-    const { p, firstSignedIn } = await openApp(name)
+    const { p, firstSignedIn } = await openApp(name, async (q) => {
+      // 端末の DB は v2 になり、v1 の ownerSeen は残る（足した表は空。司令塔が同期を始める前）
+      expect(await dbVersion(name)).toBe(2)
+      expect(await q.getMeta('ownerSeen')).toBe(author.uid)
+      expect(await q.listEditions()).toEqual([])
+      expect(Object.keys(V2_ADDED)).toContain('_outbox')
+    })
     // 覚えていた ownerSeen で、ログインの状態と一緒にすぐトップを出す（ネットで確かめる前に）
     expect(firstSignedIn).toBe(true)
     expect(useSync.getState()).toMatchObject({ auth: 'signedIn', ownerSeen: true, user: { uid: author.uid } })
     expect(author.auth.currentUser).toBe(signedInAs)
-    // 端末の DB は v2 になり、v1 の ownerSeen は残る（足した表は空）
-    expect(await dbVersion(name)).toBe(2)
-    expect(await p.getMeta('ownerSeen')).toBe(author.uid)
-    expect(await p.listEditions()).toEqual([])
-    expect(Object.keys(V2_ADDED)).toContain('_outbox')
 
-    // 同期を始める: 持ち主を確かめ、初めての受け取りで版と「知ってる」が届く
-    const engine = await startEngine(p, author.uid)
-    await waitFor(() => engine.status.downloaded && engine.status.phase === 'synced', 'クラウドとそろう')
+    // 司令塔が同期を始める（ログインし直さない）: エンジンが持ち主を確かめ、初めての受け取りで版と「知ってる」が届く
+    await waitFor(synced, 'クラウドとそろう')
+    expect(useSync.getState()).toMatchObject({ leader: true, owner: 'ok' })
     expect(await p.getMeta('ownerSeen')).toBe(author.uid)
     expect(await p.getMeta('uid')).toBe(author.uid)
     expect((await p.listEditions()).map((e) => e.id)).toEqual([fake.edition.id])
@@ -233,17 +228,23 @@ describe('段階0から段階1の版に上がった作者の端末（エミュ�
     expect((await p.loadUserRecords()).knownTerms[known.id]).toEqual(known)
     await waitFor(() => adminExists(`users/${author.uid}/meta/app`), 'データの形の版を書く')
 
-    // この端末で押した「知ってる」がクラウドに届く
-    const prev = await p.loadUserRecords()
-    const mine = pressKnownTerm(null, pressLaw, Date.now())
-    await p.save(prev, { ...prev, knownTerms: { ...prev.knownTerms, [mine.id]: mine } })
-    engine.requestUpload(true)
+    // この端末で押した「知ってる」がクラウドに届く（ストアが端末に書き、司令塔のエンジンが送る）
+    const mine = know(pressLaw)
+    expect(mine).toMatchObject({ ok: true, changed: true })
+    expect(await flushNow()).toBe(true)
+    await syncNow()
     await waitFor(
-      async () => (await adminDocIds(author.uid, 'records')).includes(`knownTerms:${mine.id}`),
+      async () => (await adminDocIds(author.uid, 'records')).includes(`knownTerms:${pressLaw.termId}`),
       '押した「知ってる」が届く',
     )
     await waitFor(async () => (await p.outboxCount()) === 0, '送信待ちが空になる')
+    await waitFor(synced, '同期済みに戻る')
     expect(canShowData(useSync.getState())).toBe(true)
+    // 送ったのは司令塔のエンジンだけ（端末の ID は司令塔が作って覚えた物。同じ端末でエンジンが2つにならない）
+    const deviceId = await p.getMeta<string>('deviceId')
+    expect(deviceId).toBeTruthy()
+    expect(await adminExists(`users/${author.uid}/${SENT_MARKS}/${deviceId}`)).toBe(true)
+    expect(await adminExists(`users/${author.uid}/${SENT_MARKS}/stage0-pc`)).toBe(false)
   })
 
   it('段階0で確かめた端末でも、上がった時に持ち主の記録が消えていたら、トップは出したまま同期だけを止める。記録が戻ると同期を始める', async () => {
@@ -256,32 +257,31 @@ describe('段階0から段階1の版に上がった作者の端末（エミュ�
     useAuthor(author)
     const { p, firstSignedIn } = await openApp(name)
     expect(firstSignedIn).toBe(true)
-    // 司令塔は裏でクラウドの記録と照らし合わせ、記録が無いと分かってもトップのまま（14.8 の 4）
+    // 司令塔のエンジンが持ち主を確かめ（claimOwner）、記録が無いと分かってもトップのまま（14.8 の 4）。同期の表示に理由を出す
     await waitFor(() => useSync.getState().owner === 'missing', '記録が無いと分かる')
     expect(canShowData(useSync.getState())).toBe(true)
+    expect(useSync.getState().status).toMatchObject({ phase: 'error', errorCode: 'owner-missing', error: OWNER_MISSING_MESSAGE })
+    expect(useSyncView.getState().view).toEqual({ kind: 'error', reason: '持ち主の記録がまだありません' })
 
     // 同期だけを止める（何も書かず、受け取らない）。ownerSeen は消さない（ほかのアカウントの記録の時だけ消す）
-    const prev = await p.loadUserRecords()
-    const mine = pressKnownTerm(null, pressLaw, Date.now())
-    await p.save(prev, { ...prev, knownTerms: { ...prev.knownTerms, [mine.id]: mine } })
-    const stopped = await startEngine(p, author.uid)
-    await waitFor(() => stopped.status.errorCode === 'owner-missing', '同期だけを止める')
-    expect(stopped.status).toMatchObject({ phase: 'error', error: OWNER_MISSING_MESSAGE })
+    expect(know(pressLaw)).toMatchObject({ ok: true, changed: true })
+    expect(await flushNow()).toBe(true)
+    await syncNow()
     expect(await p.outboxCount()).toBe(1)
     expect(await adminDocIds(author.uid, 'records')).toEqual([])
     expect(await adminExists(`users/${author.uid}/meta/app`)).toBe(false)
-    expect(await adminExists(`users/${author.uid}/${SENT_MARKS}/stage0-pc`)).toBe(false)
+    expect(await adminExists(`users/${author.uid}/${SENT_MARKS}/${await p.getMeta<string>('deviceId')}`)).toBe(false)
     expect(await p.getMeta('ownerSeen')).toBe(author.uid)
-    stopped.stop()
 
-    // 作者が Firebase の画面で持ち主の記録を作り直す（docs/DEPLOY.md の 3）。同期を始め直すと、残っていた送信待ちを送る
+    // 作者が Firebase の画面で持ち主の記録を作り直す（docs/DEPLOY.md の 3）。アプリに戻ると司令塔が同期を始め直し、残っていた送信待ちを送る
     await adminCreateOwner(author.uid)
-    const engine = await startEngine(p, author.uid)
-    await waitFor(() => engine.status.downloaded && engine.status.phase === 'synced', 'クラウドとそろう')
+    noteAppVisible()
+    await waitFor(synced, 'クラウドとそろう')
+    expect(useSync.getState().owner).toBe('ok')
     await waitFor(
-      async () => (await adminDocIds(author.uid, 'records')).includes(`knownTerms:${mine.id}`),
+      async () => (await adminDocIds(author.uid, 'records')).includes(`knownTerms:${pressLaw.termId}`),
       '残っていた「知ってる」が届く',
     )
-    expect(await p.outboxCount()).toBe(0)
+    await waitFor(async () => (await p.outboxCount()) === 0, '送信待ちが空になる')
   })
 })

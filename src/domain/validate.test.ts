@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { FAKE_OUTLETS } from '../test/fixtures/fakeOutlets'
 import { makeSampleTopic } from '../test/fixtures/sampleTopic'
-import { correctionIdOf, editionFailIdOf, termIdOf, termPackIdOf } from './ids'
+import { correctionIdOf, editionFailIdOf, termIdOf, termPackIdOf, topicIdOf } from './ids'
 import { countChars, countNonSpace, RECORD_LIMITS, withinChars } from './limits'
 import type { CorrectionRecord, Edition, EditionFail, KnownTerm, ReadMark, TermEntry, TermPack, Topic } from './types'
 import {
@@ -182,6 +182,41 @@ describe('話題（checkTopic）', () => {
     // 続報でない話題の threadId は自分の id
     const t = makeSampleTopic()
     expect(t.threadId).toBe(t.id)
+    // 続報の threadId は前の話題から写す（7.8 の「続報のつなぎ」の 2.）。前の話題は前の版の物なので、
+    // threadId は自分の id にならず、自分の版より前の版の id で始まる。makeSampleTopic は id を作った後なので、ここで直す
+    const ownThread = follow()
+    ownThread.threadId = ownThread.id
+    expect(paths(checkTopic(ownThread, opts))).toEqual(['threadId'])
+    for (const later of ['2026-11-16-12-aaaaaaaa', '2026-11-15-12-aaaaaaaa', '2026-11-15-20-aaaaaaaa']) {
+      const r = checkTopic(
+        follow((x) => (x.threadId = later)),
+        opts,
+      )
+      expect([later, paths(r)]).toEqual([later, ['threadId']])
+    }
+    // 1つ前の版（同じ日の 12:00版から 20:00版）の threadId は通る
+    const sameDay = follow((x) => {
+      x.editionId = '2026-11-15-20'
+      x.threadId = '2026-11-15-12-aaaaaaaa'
+    })
+    expect(checkTopic(sameDay, opts).errors).toEqual([])
+  })
+
+  it('記録の emphasis は強調が無い時も {}（7.1）。欄の無い記録は断る', () => {
+    // 欄が無い記録と {} の記録は stableStringify では同じ中身なのに指紋が別になり、7.7 の「同じ中身なら1件」が崩れる
+    const none = makeSampleTopic() as unknown as Record<string, unknown>
+    delete none.emphasis
+    none.id = topicIdOf(none as unknown as Topic)
+    none.threadId = none.id
+    const r = checkTopic(none, opts)
+    expect(paths(r)).toEqual(['emphasis'])
+    expect(codes(r)).toEqual(['type'])
+    const empty = checkTopic(
+      makeSampleTopic((t) => (t.emphasis = {})),
+      opts,
+    )
+    expect(empty.errors).toEqual([])
+    expect(empty.warnings.map((w) => w.code)).toEqual(['emphasis:summary-missing'])
   })
 
   it('1つの話題の中で、1つの表記は1つの語にだけ属する', () => {

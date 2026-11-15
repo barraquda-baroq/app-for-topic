@@ -258,6 +258,8 @@ export interface FakeDeviceOptions {
   clockOffset?: number
   /** 端末の中の保存の名前（開き直す時に同じ物を使う） */
   dbName?: string
+  /** 前に別のアカウントで同期していた端末を、このアカウントと同期してよいと確かめた（エンジンの allowAccountSwitch） */
+  allowAccountSwitch?: boolean
 }
 
 let seq = 0
@@ -266,10 +268,11 @@ export class FakeDevice {
   readonly p: Persistence
   readonly uid: string
   readonly dbName: string
+  readonly allowAccountSwitch: boolean
   clockOffset: number
   begun = false
   stopped = false
-  /** 止まった理由（エンジンの errorCode と同じ: owner-missing・owner-mismatch・listen） */
+  /** 止まった理由（エンジンの errorCode と同じ: owner-missing・owner-mismatch・account-mismatch・listen） */
   errorCode: string | null = null
   /** クラウドのデータの形の版が高い（送らない） */
   outdated = false
@@ -302,6 +305,7 @@ export class FakeDevice {
     this.uid = opts.uid ?? 'fake-user'
     this.clockOffset = opts.clockOffset ?? 0
     this.dbName = opts.dbName ?? `fake-${name}-${++seq}-${Math.random().toString(36).slice(2)}`
+    this.allowAccountSwitch = opts.allowAccountSwitch ?? false
     this.p = createPersistence(this.dbName)
   }
 
@@ -316,13 +320,14 @@ export class FakeDevice {
   }
 
   /** アプリを閉じて、同じ端末で開き直す（メモリの状態を捨てる。端末の中の保存は残る） */
-  reopen(opts: Pick<FakeDeviceOptions, 'clockOffset' | 'uid'> = {}): FakeDevice {
+  reopen(opts: Pick<FakeDeviceOptions, 'clockOffset' | 'uid' | 'allowAccountSwitch'> = {}): FakeDevice {
     this.p.close()
     this.stopped = true
     return new FakeDevice(this.name, this.cloud, {
       uid: opts.uid ?? this.uid,
       clockOffset: opts.clockOffset ?? this.clockOffset,
       dbName: this.dbName,
+      ...(opts.allowAccountSwitch ? { allowAccountSwitch: true } : {}),
     })
   }
 
@@ -345,8 +350,17 @@ export class FakeDevice {
       return
     }
     await this.p.setMeta('ownerSeen', this.uid)
+    const previous = await this.p.getMeta<string>('uid')
+    if (previous !== this.uid) {
+      // 前に別のアカウントで同期していた端末は、確かめた印が無ければ止める（エンジンの prepareDevice。docs/SPEC.md の 7.8）
+      if (typeof previous === 'string' && previous && !this.allowAccountSwitch) {
+        this.errorCode = 'account-mismatch'
+        this.stopped = true
+        return
+      }
+    }
     this.begun = true
-    if ((await this.p.getMeta<string>('uid')) !== this.uid) {
+    if (previous !== this.uid) {
       await this.p.markAllDirty()
       await this.p.setMeta('uid', this.uid)
     }
@@ -416,6 +430,11 @@ export class FakeDevice {
   private async resubscribe(place: Place): Promise<void> {
     if (place === 'records') await this.beginRecords().catch(() => this.listenFailed('records'))
     else this.subscribe(place, privateStart(this.cursor.private, this.now()))
+  }
+
+  /** いまの購読を始めた位置（ms。購読が無ければ null。エンジンの subscribedFrom。購読し直しを確かめる） */
+  subscribedFrom(place: Place): number | null {
+    return this.listeners[place]?.from ?? null
   }
 
   /** 記録した位置から購読し直す（エンジンの reanchor。20分より長く裏にあった後など） */

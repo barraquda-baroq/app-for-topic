@@ -296,6 +296,11 @@ describe('同期の表示の8つ（docs/SPEC.md の 7.8 の「部品」の syncV
       kind: 'error',
       reason: 'クラウドの索引がまだありません',
     })
+    // 前に別のアカウントで同期した端末をエンジンが止めた（docs/SPEC.md の 7.8。司令塔はログインの画面に確かめを出す）
+    expect(view(st({ phase: 'error', errorCode: 'account-mismatch', error: '長い言葉' }))).toEqual({
+      kind: 'error',
+      reason: '前に別のアカウントで同期した端末です',
+    })
     expect(view(st({ phase: 'error', errorCode: 'internal', error: 'クラウドとの差を解消できませんでした' }))).toEqual({
       kind: 'error',
       reason: 'クラウドとの差を解消できませんでした',

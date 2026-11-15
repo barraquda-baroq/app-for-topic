@@ -11,6 +11,7 @@ import {
   CORRECTION_ID_RE,
   editionFailIdOf,
   editionIdOf,
+  editionIdOfRecordId,
   EDITION_ID_RE,
   parseEditionId,
   READ_ID_RE,
@@ -200,6 +201,13 @@ export function checkTopic(topic: unknown, opts: TopicCheckOptions = {}): CheckR
     c.err('threadId', 'id', 'threadId は話題の id の形にしてください')
   else if (t.followUp === null && t.threadId !== t.id)
     c.err('threadId', 'rule', '続報でない話題の threadId は自分の id にしてください')
+  else if (isObj(t.followUp) && typeof t.editionId === 'string') {
+    // 続報の threadId は前の話題の threadId を写す（docs/SPEC.md の 7.8 の「続報のつなぎ」の 2.）。前の話題は前の版の物なので、
+    // 自分の id にはならず、自分の版より前の版の id で始まる（版の id は文字の順で比べられる）。写し忘れると続報の鎖が切れ、後から直せない（同 5.）
+    const threadEdition = editionIdOfRecordId(t.threadId)
+    if (t.threadId === t.id || threadEdition === null || threadEdition >= t.editionId)
+      c.err('threadId', 'rule', '続報の threadId は前の話題の threadId にしてください（自分より前の版の id で始まる）')
+  }
 
   c.int('rank', t.rank, T.rankMin, T.rankMax)
   c.text('rankReason', t.rankReason, 1, T.rankReason)
@@ -350,7 +358,9 @@ export function checkTopic(topic: unknown, opts: TopicCheckOptions = {}): CheckR
     c.text('check.model', t.check.model, 1, T.checkModel, true)
   }
 
-  // 強調（docs/SPEC.md の 7.1 の「強調」）。入力で省いた時は {}
+  // 強調（docs/SPEC.md の 7.1 の「強調」）。記録では欄が必須で、強調が無い時も {} を入れる（入力で省けるのはコネクタの入力だけ）。
+  // 欄が無い記録と {} の記録は同じ中身なのに指紋が別になり、7.7 の「同じ中身を送り直しても1件」が崩れるので断る
+  if (t.emphasis === undefined) c.err('emphasis', 'type', 'emphasis はオブジェクトにしてください（強調が無い時は {}）')
   const emph = checkEmphasis(topic)
   const at = (key: string) => (key ? `emphasis["${key}"]` : 'emphasis')
   for (const e of emph.errors) c.err(at(e.key), `emphasis:${e.code}`, e.message)

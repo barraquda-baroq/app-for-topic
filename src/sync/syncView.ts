@@ -15,6 +15,13 @@ export const OWNER_MISSING_MESSAGE = '持ち主の記録がまだありません
 export const OWNER_MISMATCH_MESSAGE = 'このアカウントは Topic Studio の持ち主ではありません'
 
 /**
+ * 前に別のアカウントで同期していた端末を、確かめずに同期しようとした時の言葉（エンジンが止める。司令塔はログインの画面に確かめを出す。
+ * docs/SPEC.md の 7.8 の「既読・知ってるを送る・受け取る」）
+ */
+export const ACCOUNT_MISMATCH_MESSAGE =
+  'この端末は前に別のアカウントで同期していました。このアカウントで同期するか確かめてください'
+
+/**
  * 「同期できません（…）」の短い理由のうち、持ち主の記録が無い時の物（この端末で確かめたアカウントで記録が消えていた時。トップは出したまま
  * 同期だけを止め、ヘッダーに出す。docs/SPEC.md の 7.8・14.8 の 4）
  */
@@ -42,6 +49,8 @@ function shortReason(s: SyncStatus): string {
       return OWNER_MISSING_REASON
     case 'owner-mismatch':
       return 'このアカウントは持ち主ではありません'
+    case 'account-mismatch':
+      return '前に別のアカウントで同期した端末です'
     case 'permission-denied':
       return 'アクセスが拒否されました'
     case 'unauthenticated':

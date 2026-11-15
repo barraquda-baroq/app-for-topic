@@ -2,7 +2,8 @@
 // アカウントで同期していた端末は確かめるまで始めない・エンジンの持ち主の知らせ（記録が無い → トップのまま同期の表示に理由・記録が戻ると
 // 始め直す／ほかのアカウント → ログインの画面へ）・タブの受け持ち（Web Locks・新しい版の画面に譲る・受け持たない画面は届いた状態を出す）・
 // 裏に回る時にすぐ送る・20分より長く裏にあった後に購読し直す・日付が変わったら端末の中の30日の外を消す・1日1回の手入れ・ログアウトの前に
-// 送る・最初の受け取りの後に欠けた話題を直接読む・エンジンの口がストアを通る。
+// 送る・最初の受け取りの後に欠けた話題を直接読む・エンジンの口がストアを通る・前のアカウントを読めない時は閉じる側に倒す・同期を始められ
+// なかった時は「同期できません（理由）」にして始め直す・画面どうしの知らせ（BroadcastChannel）の配線。
 // Firebase・Firestore・持ち主の記録・同期のエンジンは仮の物（エンジンは作られた時の口を覚え、状態をテストが知らせる）、保存先とストアは本物
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EngineOptions, MaintainResult, SyncEngine, SyncStatus, TopicFetchResult } from './engine'
@@ -33,6 +34,8 @@ const h = vi.hoisted(() => ({
   maintainResult: { deleted: {}, total: 0, capped: false, skipped: null } as MaintainResult,
   fetchResult: null as null | ((ids: readonly string[]) => TopicFetchResult),
   modelWatches: 0,
+  /** エンジンの start が投げる誤り（1回だけ） */
+  startError: null as Error | null,
 }))
 
 vi.mock('./firebase', () => ({
@@ -93,6 +96,9 @@ vi.mock('./engine', () => ({
       },
       start: async () => {
         fake.started += 1
+        const e = h.startError
+        h.startError = null
+        if (e) throw e
       },
       stop: () => {
         fake.stopped = true
@@ -145,6 +151,7 @@ import {
   signOut,
   syncNow,
   useSync,
+  type TabMessage,
 } from './controller'
 import { useSyncView } from './syncView'
 
@@ -163,6 +170,7 @@ afterEach(() => {
   h.maintainResult = { deleted: {}, total: 0, capped: false, skipped: null }
   h.fetchResult = null
   h.modelWatches = 0
+  h.startError = null
   vi.useRealTimers()
   Reflect.deleteProperty(navigator, 'locks')
 })
@@ -196,6 +204,19 @@ const engine = (i = h.engines.length - 1): FakeEngine => {
   const e = h.engines[i]
   if (!e) throw new Error('エンジンがまだありません')
   return e
+}
+
+/** 端末の保存先の key の読み取りを、times 回だけ失敗させる（端末の DB のつながりが切れた時。iPhone の Safari で起きうる） */
+function failMetaReads(db: Persistence, key: string, times: number): void {
+  const real = db.getMeta.bind(db)
+  let left = times
+  db.getMeta = (<T>(k: string): Promise<T | undefined> => {
+    if (k === key && left > 0) {
+      left -= 1
+      return Promise.reject(new Error('端末の保存先を読めません（テスト）'))
+    }
+    return real<T>(k)
+  }) as Persistence['getMeta']
 }
 
 describe('同期のエンジンを始める（持ち主だと確かめてから）', () => {
@@ -287,6 +308,109 @@ describe('前に別のアカウントで同期していた端末（docs/SPEC.md 
     expect(useSync.getState().accountMismatch).toEqual({ previousEmail: '' })
     expect(h.engines).toHaveLength(0)
   })
+
+  it('［このアカウントで同期する］で始めたエンジンだけが、前のアカウントの端末で始めてよい印を持つ', async () => {
+    await start(async (d) => {
+      await d.setMeta('uid', 'uid-a')
+      await d.setMeta('ownerSeen', 'uid-b')
+    })
+    await signInAs('uid-b')
+    await confirmAccountSwitch()
+    await settle()
+    expect(engine().opts.allowAccountSwitch).toBe(true)
+    // 印の無い端末・同じアカウントの端末では持たない
+    resetSyncForTests()
+    h.engines = []
+    await start((d) => d.setMeta('ownerSeen', 'uid-a'))
+    await signInAs('uid-a')
+    expect(engine().opts.allowAccountSwitch).toBe(false)
+  })
+
+  it('エンジンが前のアカウントの端末だと止めた時も（二重の守り）、同期を止めてログインの画面に確かめを出す', async () => {
+    await start((d) => d.setMeta('ownerSeen', 'uid-a'))
+    await signInAs('uid-a')
+    const e = engine()
+    e.emit({ phase: 'error', errorCode: 'account-mismatch', error: 'x' })
+    expect(e.stopped).toBe(true)
+    expect(useSync.getState()).toMatchObject({ accountMismatch: { previousEmail: '' }, leader: false })
+    expect(canShowData(useSync.getState())).toBe(false)
+    await confirmAccountSwitch()
+    await settle()
+    expect(h.engines).toHaveLength(2)
+    expect(engine().opts.allowAccountSwitch).toBe(true)
+  })
+
+  it('まだ確かめていないアカウントで前のアカウントを1回読めなくても、確かめずに同期を始めない。読み直すと確かめを出す', async () => {
+    const db = await start((d) => d.setMeta('uid', 'uid-a'))
+    failMetaReads(db, 'uid', 1)
+    const seen = await signInAs('uid-b')
+    expect(h.checks).toBe(1)
+    expect(seen).not.toContain(true)
+    expect(h.engines).toHaveLength(0)
+    expect(useSync.getState()).toMatchObject({ owner: 'ok', ownerSeen: true, accountUnknown: true, accountMismatch: null })
+    // 表に戻ると読み直す: 確かめの画面にし、確かめるまでエンジンを作らない
+    noteAppVisible()
+    await settle()
+    expect(useSync.getState()).toMatchObject({ accountUnknown: false, accountMismatch: { previousEmail: '' } })
+    expect(canShowData(useSync.getState())).toBe(false)
+    expect(h.engines).toHaveLength(0)
+  })
+
+  it('確かめたアカウントでも、前のアカウントを読めない間はトップを一瞬も出さない（1回・2回）。少し後に読み直す', async () => {
+    for (const times of [1, 2]) {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const db = await start(async (d) => {
+        await d.setMeta('uid', 'uid-a')
+        await d.setMeta('uidEmail', 'a@example.com')
+        await d.setMeta('ownerSeen', 'uid-b')
+      })
+      failMetaReads(db, 'uid', times)
+      const seen = await signInAs('uid-b', 'b@example.com')
+      expect([times, seen.includes(true)]).toEqual([times, false])
+      expect(h.engines).toHaveLength(0)
+      if (times === 2) {
+        expect(useSync.getState()).toMatchObject({ accountUnknown: true })
+        // 15秒後に読み直す（つながった・表に戻った知らせが無くても）
+        await vi.advanceTimersByTimeAsync(15_000)
+        await settle()
+      }
+      expect(useSync.getState()).toMatchObject({ accountUnknown: false, accountMismatch: { previousEmail: 'a@example.com' } })
+      expect(canShowData(useSync.getState())).toBe(false)
+      expect(h.engines).toHaveLength(0)
+      resetSyncForTests()
+      resetStoreForTests()
+      db.close()
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('同期を始められなかった時（docs/SPEC.md の 7.8 の8つの「同期できません（理由）」）', () => {
+  it('エンジンが始める時に投げた: 「受け取り中…」のままにせず「同期できません（理由）」。表に戻ると始め直す', async () => {
+    h.startError = new Error('始められません（テスト）')
+    await start((d) => d.setMeta('ownerSeen', 'uid-a'))
+    await signInAs('uid-a')
+    expect(engine().stopped).toBe(true)
+    expect(useSyncView.getState().view).toEqual({ kind: 'error', reason: '始められません（テスト）' })
+    noteAppVisible()
+    await settle()
+    expect(h.engines).toHaveLength(2)
+    expect(engine().started).toBe(1)
+    expect(engine().stopped).toBe(false)
+    expect(useSyncView.getState().view).toEqual({ kind: 'downloading' })
+  })
+
+  it('エンジンを作る前に投げた（端末の ID を読めない）: 同期の表示に理由を出し、つながった時に始め直す', async () => {
+    const db = await start((d) => d.setMeta('ownerSeen', 'uid-a'))
+    failMetaReads(db, 'deviceId', 1)
+    await signInAs('uid-a')
+    expect(h.engines).toHaveLength(0)
+    expect(useSyncView.getState().view).toEqual({ kind: 'error', reason: '端末の保存先を読めません（テスト）' })
+    window.dispatchEvent(new Event('online'))
+    await settle()
+    expect(h.engines).toHaveLength(1)
+    expect(useSyncView.getState().view).toEqual({ kind: 'downloading' })
+  })
 })
 
 describe('エンジンの持ち主の知らせ（docs/SPEC.md の 7.8 の「持ち主」・14.8 の 4）', () => {
@@ -298,19 +422,21 @@ describe('エンジンの持ち主の知らせ（docs/SPEC.md の 7.8 の「持�
     expect(canShowData(useSync.getState())).toBe(true)
     expect(useSync.getState().owner).toBe('missing')
     expect(useSyncView.getState().view).toEqual({ kind: 'error', reason: '持ち主の記録がまだありません' })
-    // 表に戻っても、記録がまだ無ければ始め直さない
-    noteAppVisible()
-    await settle()
-    expect(h.engines).toHaveLength(1)
-    // 作者が記録を作ってから表に戻る
-    h.answer = 'ok'
+    // 表に戻ると同期を始め直し、エンジンがもう一度確かめる（司令塔は読まない。DS と同じ）。記録がまだ無ければ、また止まる
     noteAppVisible()
     await settle()
     expect(h.engines).toHaveLength(2)
     expect(engine(0).stopped).toBe(true)
+    expect(useSyncView.getState().view).toEqual({ kind: 'error', reason: '持ち主の記録がまだありません' })
+    engine().emit({ phase: 'error', errorCode: 'owner-missing', error: '持ち主の記録がまだありません（docs/DEPLOY.md の 3）' })
+    // 作者が記録を作ってから表に戻る
+    noteAppVisible()
+    await settle()
+    expect(h.engines).toHaveLength(3)
     engine().emit({ phase: 'downloading' })
     expect(useSync.getState().owner).toBe('ok')
     expect(useSyncView.getState().view).toEqual({ kind: 'downloading' })
+    expect(h.checks).toBe(0)
   })
 
   it('ほかのアカウントの記録: 同期を止め、ログインの画面に戻す', async () => {
@@ -323,12 +449,28 @@ describe('エンジンの持ち主の知らせ（docs/SPEC.md の 7.8 の「持�
     expect(canShowData(useSync.getState())).toBe(false)
   })
 
-  it('司令塔の裏の確かめでほかのアカウントの記録だと分かっても、同期を止める', async () => {
+  it('確かめた端末を開いた時、照らし合わせはエンジンだけがする（司令塔は持ち主の記録を読まない。docs/SPEC.md の 7.8 の controller.ts）', async () => {
     await start((d) => d.setMeta('ownerSeen', 'uid-a'))
     h.answer = 'mismatch'
     await signInAs('uid-a')
-    expect(h.engines.every((e) => e.stopped)).toBe(true)
-    expect(useSync.getState()).toMatchObject({ owner: 'mismatch', leader: false })
+    noteAppVisible()
+    window.dispatchEvent(new Event('focus'))
+    window.dispatchEvent(new Event('online'))
+    await settle()
+    expect(h.checks).toBe(0)
+    expect(h.engines).toHaveLength(1)
+    expect(engine().opts.ownerLock).toBe(true)
+    expect(canShowData(useSync.getState())).toBe(true)
+  })
+
+  it('受け持たない画面も、受け持つ画面の知らせでほかのアカウントの記録だと分かったら、データを見えなくする', () => {
+    useSync.setState({ auth: 'signedIn', owner: 'ok', ownerSeen: true, leader: false, status: null })
+    onTabMessage({
+      status: { phase: 'error', pending: 0, lastSyncedAt: null, error: 'x', errorCode: 'owner-mismatch' },
+      model: DATA_MODEL,
+    })
+    expect(useSync.getState()).toMatchObject({ owner: 'mismatch', ownerSeen: false })
+    expect(canShowData(useSync.getState())).toBe(false)
   })
 })
 
@@ -369,6 +511,33 @@ describe('タブの受け持ち（Web Locks topic-studio-sync・BroadcastChannel
     expect(useToasts.getState().toasts.at(-1)?.message).toBe(
       'アプリの新しい版が別の画面で開かれました。この画面を読み込み直してください。',
     )
+  })
+
+  it('画面どうしの知らせの配線: 起動で状態を頼み、受け持つ画面は状態を知らせ、新しい版の画面の知らせで譲る', async () => {
+    const other = new BroadcastChannel('topic-studio-sync-status')
+    const got: TabMessage[] = []
+    other.onmessage = (ev: MessageEvent<TabMessage>) => got.push(ev.data)
+    try {
+      await start((d) => d.setMeta('ownerSeen', 'uid-a'))
+      await vi.waitFor(() => expect(got).toContainEqual({ request: true, model: DATA_MODEL }))
+      await signInAs('uid-a')
+      engine().emit({ phase: 'synced' })
+      await vi.waitFor(() =>
+        expect(got).toContainEqual({ status: expect.objectContaining({ phase: 'synced' }), model: DATA_MODEL }),
+      )
+      // ほかの画面の頼みには、今の状態を返す
+      got.length = 0
+      other.postMessage({ request: true, model: DATA_MODEL } satisfies TabMessage)
+      await vi.waitFor(() =>
+        expect(got).toContainEqual({ status: expect.objectContaining({ phase: 'synced' }), model: DATA_MODEL }),
+      )
+      // 新しいデータの形の版の画面が開いた
+      other.postMessage({ request: true, model: DATA_MODEL + 1 } satisfies TabMessage)
+      await vi.waitFor(() => expect(engine().stopped).toBe(true))
+      expect(useSync.getState().leader).toBe(false)
+    } finally {
+      other.close()
+    }
   })
 
   it('受け持たない画面は、受け持つ画面から届いた状態を出す（同じ版・古い版の画面の知らせでは譲らない）', () => {

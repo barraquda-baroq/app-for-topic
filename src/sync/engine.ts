@@ -97,9 +97,9 @@ import {
   sendGuardTime,
   snapshotAdvance,
 } from './syncPlan'
-import { OWNER_MISMATCH_MESSAGE, OWNER_MISSING_MESSAGE } from './syncView'
+import { ACCOUNT_MISMATCH_MESSAGE, OWNER_MISMATCH_MESSAGE, OWNER_MISSING_MESSAGE } from './syncView'
 
-export { RECORDS_SUBSCRIBED_TABLES, SYNC_SCHEMA, OWNER_MISMATCH_MESSAGE, OWNER_MISSING_MESSAGE }
+export { RECORDS_SUBSCRIBED_TABLES, SYNC_SCHEMA, ACCOUNT_MISMATCH_MESSAGE, OWNER_MISMATCH_MESSAGE, OWNER_MISSING_MESSAGE }
 
 /**
  * エンジンが端末の中のデータを読み書きする口（docs/SPEC.md の 7.8 の「部品」）。src/db/persistence.ts の Persistence がそのまま当てはまる。
@@ -171,6 +171,13 @@ export interface EngineOptions {
    * アプリは持ち主の記録を作らない（作者が Firebase の画面で作る。形1）。アクセスルールも持ち主だけに読み書きを許す（firestore.rules）
    */
   ownerLock?: boolean
+  /**
+   * 前に別のアカウントで同期していた端末（_meta の uid が「あって、違う」）を、このアカウントと同期してよいと確かめた（ログインの画面の
+   * ［このアカウントで同期する］）。無い時にそういう端末で始めると、markAllDirty せずに SyncError('account-mismatch') で止まる
+   * （司令塔の確かめが読めずに開いた時の二重の守り。docs/SPEC.md の 7.8 の「既読・知ってるを送る・受け取る」）。uid の無い端末
+   * （新しい端末・段階0からの上がり）は確かめずに始める
+   */
+  allowAccountSwitch?: boolean
   /**
    * このアプリのデータの形の版。クラウドに記録し（無い・低ければ上げる）、クラウドの版の方が高ければ送らない。
    * 渡さなければ確かめない（テスト用）
@@ -1044,37 +1051,27 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
   }
 
   let beginRetry: ReturnType<typeof setTimeout> | null = null
+  /** 端末の準備に失敗してやり直した回数（待つ長さを延ばす） */
+  let beginRetryCount = 0
+
+  function retryBegin(delay: number): void {
+    if (beginRetry || stopped) return
+    beginRetry = setTimeout(() => {
+      beginRetry = null
+      void begin()
+    }, delay)
+  }
 
   /**
-   * 同期を始める。持ち主を確かめてから（ownerLock の時）、初めてのアカウントなら端末内を「共通の履歴が無い」状態にし、
-   * 端末の中の30日の外を消し、購読と送信を始める。通信できずに持ち主を確かめられない時は、つながってからやり直す。
+   * 端末の準備（begin の中。端末の DB を読み書きする）。このアカウントと同期するのが初めてなら、アプリの記録は共通の履歴が無い前提で
+   * 突き合わせ、Claude の記録の写しと位置を消して、初めての受け取りから（persistence の markAllDirty が位置・caughtUpAt・firstSync も
+   * 消す）。前に別のアカウントで同期していた端末は、確かめた印（allowAccountSwitch）が無ければ止める（docs/SPEC.md の 7.8）
    */
-  async function begin(): Promise<void> {
-    if (stopped || begun) return
-    if (!ownerOk) {
-      try {
-        await claimOwner()
-        ownerOk = true
-      } catch (e) {
-        fail(e)
-        if (e instanceof SyncError) {
-          // 持ち主の記録が無い・別のアカウントのクラウド: 何も送らず、受け取らない
-          stopped = true
-          return
-        }
-        if (!beginRetry && !stopped)
-          beginRetry = setTimeout(() => {
-            beginRetry = null
-            void begin()
-          }, RETRY_DELAYS_MS[1])
-        return
-      }
-    }
-    if (stopped || begun) return
-    begun = true
-    if ((await target.getMeta<string>('uid')) !== uid) {
-      // このアカウントと同期するのは初めて（前に別のアカウントで使っていた端末も）: アプリの記録は共通の履歴が無い前提で突き合わせ、
-      // Claude の記録の写しと位置を消して、初めての受け取りから（persistence の markAllDirty が位置・caughtUpAt・firstSync も消す）
+  async function prepareDevice(): Promise<void> {
+    const previous = await target.getMeta<string>('uid')
+    if (previous !== uid) {
+      if (typeof previous === 'string' && previous && !opts.allowAccountSwitch)
+        throw new SyncError('account-mismatch', ACCOUNT_MISMATCH_MESSAGE)
       await target.markAllDirty()
       await target.setMeta('uid', uid)
     }
@@ -1094,6 +1091,48 @@ export function createSyncEngine(opts: EngineOptions): SyncEngine {
     if (stopped) return
     setStatus({ phase: 'downloading', error: null, errorCode: null })
     await refreshPending()
+  }
+
+  /**
+   * 同期を始める。持ち主を確かめてから（ownerLock の時）、端末を準備し（prepareDevice）、購読と送信を始める。通信できずに持ち主を
+   * 確かめられない時は、つながってからやり直す。端末の DB を読み書きできなかった時は「同期できません（理由）」を出してやり直す
+   * （受け取り中…のまま止まらないように。docs/SPEC.md の 7.8 の8つ）
+   */
+  async function begin(): Promise<void> {
+    if (stopped || begun) return
+    if (!ownerOk) {
+      try {
+        await claimOwner()
+        ownerOk = true
+      } catch (e) {
+        fail(e)
+        if (e instanceof SyncError) {
+          // 持ち主の記録が無い・別のアカウントのクラウド: 何も送らず、受け取らない
+          stopped = true
+          return
+        }
+        retryBegin(RETRY_DELAYS_MS[1])
+        return
+      }
+    }
+    if (stopped || begun) return
+    begun = true
+    try {
+      await prepareDevice()
+    } catch (e) {
+      begun = false
+      fail(e)
+      if (e instanceof SyncError) {
+        // 前に別のアカウントで同期していた端末: 何も送らず、受け取らない（司令塔が確かめを出す）
+        stopped = true
+        return
+      }
+      retryBegin(RETRY_DELAYS_MS[Math.min(beginRetryCount, RETRY_DELAYS_MS.length - 1)])
+      beginRetryCount += 1
+      return
+    }
+    if (stopped) return
+    beginRetryCount = 0
     watchModel()
     subscribe(listeners.private, privateStart(listeners.private.cursor, clock()))
     void exclusive(beginRecords).catch((e) => {

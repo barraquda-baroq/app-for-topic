@@ -22,6 +22,7 @@ import {
   markRead,
   markSeen,
   noteSyncDownloaded,
+  onExternalSave,
   openEdition,
   reloadFromDisk,
   resetStoreForTests,
@@ -408,6 +409,34 @@ describe('別のタブ・アカウントの切り替え・保存できない時'
     expect(s.user.reads[TODAY.edition.id].seen).toBe(true)
     expect(s.user.knownTerms).toBe(before)
     expect(ready(s.opened.view).editionId).toBe(TODAY.edition.id)
+  })
+
+  it('別のタブの知らせ（BroadcastChannel の topic-studio-sync）で、送るきっかけを知らせ、端末の中を読み直す（自分の知らせでは読まない）', async () => {
+    const name = `store-channel-${Math.random().toString(36).slice(2)}`
+    const p = newDb(name)
+    await initStore(p)
+    const external = vi.fn()
+    onExternalSave(external)
+    // 別のタブ（同じ端末の DB）が既読を書いて知らせる
+    const other = newDb(name)
+    const prev = await other.loadUserRecords()
+    await other.save(prev, { ...prev, reads: { [TODAY.edition.id]: readMark(TODAY.edition.id, { seen: true }) } })
+    const tab = new BroadcastChannel('topic-studio-sync')
+    const heard: unknown[] = []
+    tab.onmessage = (ev: MessageEvent) => heard.push(ev.data)
+    try {
+      tab.postMessage({ from: '別のタブ' })
+      await vi.waitFor(() => expect(useApp.getState().user.reads[TODAY.edition.id]?.seen).toBe(true))
+      expect(external).toHaveBeenCalledTimes(1)
+      // このタブが書いた時は、別のタブへ知らせる（中身はこのタブの印だけ）
+      know(press('〇〇法'))
+      await flushNow()
+      await vi.waitFor(() => expect(heard).toHaveLength(1))
+      expect(Object.keys(heard[0] as object)).toEqual(['from'])
+      expect(external).toHaveBeenCalledTimes(1)
+    } finally {
+      tab.close()
+    }
   })
 
   it('アカウントを切り替えて Claude の記録の写しを消したら、版の一覧も空にする（アプリの記録は残す）', async () => {

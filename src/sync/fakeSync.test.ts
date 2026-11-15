@@ -568,6 +568,76 @@ describe('初めての受け取り（docs/SPEC.md の 7.8 の「版と話題を�
   })
 })
 
+describe('購読し直し（docs/SPEC.md の 7.8 の engine.ts の reanchor・7.9 の「購読し直し」）', () => {
+  /** 位置の時刻（ms） */
+  const cursorMs = (d: FakeDevice) => {
+    const c = d.cursor.records
+    return c ? c.s * 1000 + Math.floor(c.n / 1_000_000) : null
+  }
+
+  it('新しい版が届いて位置が進んだ後だけ、位置から購読し直す（読むのは位置と同じ時刻の文書だけ）', async () => {
+    const cloud = newCloud()
+    seed(cloud, makeFakeEdition({ date: UNTIL, slot: '12', seed: 'reanchor-a' }))
+    const a = await started(cloud, 'A')
+    // 2. を終えた時に位置から購読し直している。進んでいなければ購読し直さない
+    const from0 = a.subscribedFrom('records')
+    expect(from0).toBe(cursorMs(a))
+    await a.reanchor()
+    expect(a.subscribedFrom('records')).toBe(from0)
+    // 新しい版が届く
+    cloud.tick(HOUR)
+    const next = makeFakeEdition({ date: addDaysToDate(UNTIL, 1), slot: '12', seed: 'reanchor-a2' })
+    cloud.addAll(fakeRecordsOf(next), () => cloud.now)
+    await a.receive()
+    expect(cursorMs(a)).toBe(cloud.now)
+    expect(a.subscribedFrom('records')).toBe(from0)
+    await a.reanchor()
+    expect(a.subscribedFrom('records')).toBe(cloud.now)
+    const reads = cloud.readsOf('A')
+    await a.receive()
+    const sameTime = fakeRecordsOf(next).filter((r) => r.table !== 'termPacks').length
+    expect(cloud.readsOf('A') - reads).toBe(sameTime)
+    expect(a.knownReads).toBe(1)
+  })
+
+  it('開いたまま31日そろわなかった後は、初めての受け取りに入り直す（「知ってる」は位置から1回）', async () => {
+    const cloud = newCloud()
+    seed(cloud, makeFakeEdition({ date: UNTIL, slot: '12', seed: 'reanchor-b' }))
+    const a = await started(cloud, 'A')
+    expect(a.downloaded).toBe(true)
+    cloud.tick(40 * DAY)
+    await a.reanchor()
+    expect(a.downloaded).toBe(false)
+    expect(a.knownReads).toBe(2)
+    expect(a.subscribedFrom('records')).toBe(firstSyncSinceMs(a.now()))
+    await a.sync()
+    expect(a.downloaded).toBe(true)
+    expect(cursorMs(a)! >= firstSyncSinceMs(a.now()) - 1000).toBe(true)
+    expect(await a.p.getMeta('firstSync')).toBeNull()
+    expect(a.caughtUpAt).toBe(a.now())
+    expect(await a.p.listEditions()).toEqual([])
+  })
+
+  it('初めての受け取りの 2. の途中・購読の再試行を待っている間は、何もしない', async () => {
+    const cloud = newCloud()
+    const a = track(new FakeDevice('A', cloud))
+    await a.start()
+    expect(a.firstPending).toBe(true)
+    const from = a.subscribedFrom('records')
+    cloud.tick(40 * DAY)
+    await a.reanchor()
+    expect(a.knownReads).toBe(1)
+    expect(a.subscribedFrom('records')).toBe(from)
+    // 購読が止まって、再試行を待っている
+    cloud.failListen.add('A')
+    await a.receive()
+    expect(a.subscribedFrom('records')).toBeNull()
+    await a.reanchor()
+    expect(a.subscribedFrom('records')).toBeNull()
+    expect(a.knownReads).toBe(1)
+  })
+})
+
 describe('持ち主・データの形の版（docs/SPEC.md の 7.8 の「持ち主・データの形の版・同期の表示」）', () => {
   it('持ち主の記録が無い → 同期しない（送らない・受け取らない）', async () => {
     const cloud = newCloud({ owner: null })
@@ -589,6 +659,24 @@ describe('持ち主・データの形の版（docs/SPEC.md の 7.8 の「持ち�
     await a.start()
     expect(a.errorCode).toBe('owner-mismatch')
     expect(await a.p.getMeta('ownerSeen')).toBeNull()
+  })
+
+  it('前に別のアカウントで同期した端末 → 確かめた印が無ければ同期しない。印があれば写しを消して受け取り直す', async () => {
+    const cloudA = new FakeCloud({ now: NOW, owner: 'uid-a' })
+    seed(cloudA, makeFakeEdition({ date: UNTIL, slot: '12', seed: 'switch-a' }))
+    const a = await started(cloudA, 'A', { uid: 'uid-a' })
+    expect(await a.p.listEditions()).toHaveLength(1)
+    a.p.close()
+    const cloud = newCloud()
+    const b = track(new FakeDevice('A', cloud, { dbName: a.dbName }))
+    await b.start()
+    expect(b.errorCode).toBe('account-mismatch')
+    expect(await b.p.getMeta('uid')).toBe('uid-a')
+    expect(await b.p.listEditions()).toHaveLength(1)
+    const c = await reopened(b, { allowAccountSwitch: true })
+    expect(c.errorCode).toBeNull()
+    expect(await c.p.getMeta('uid')).toBe('fake-user')
+    expect(await c.p.listEditions()).toEqual([])
   })
 
   it('データの形の版が高い → 受け取りは続け、送らない（送信待ちに残る）', async () => {
