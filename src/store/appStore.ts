@@ -633,7 +633,7 @@ function followCandidates(now: number): string[] {
 }
 
 /**
- * 最初の受け取りが終わっても話題の欠けている版: 欠けた話題をクラウドから直接読み（多くて 30件。1回の起動で版ごとに1回）、クラウドにも無い
+ * 最初の受け取りが終わっても話題の欠けている版: 欠けた話題をクラウドから直接読み（多くて 30件。読めた版は1回の起動で1回）、クラウドにも無い
  * 話題を覚えて読み直す。読んだ話題は同期のエンジンが端末に入れ、その反映で開いている版も読み直す
  */
 function fetchMissing(view: EditionView): void {
@@ -650,7 +650,7 @@ function fetchMissing(view: EditionView): void {
       scheduleViewRefresh()
     })
     .catch((e: unknown) => {
-      // 読めなかった（オフラインなど）: 次の起動で読み直す（この起動では、そろうまで前の版を出したまま）
+      // 読めなかった（オフラインなど）: 読んだ印を外し、次に版を読み直す時（記録が届いた・版を開いた時など）にもう一度読む（docs/SPEC.md の 16.6 の 56）
       console.warn('欠けた話題を読めませんでした', e)
       fetchedEditions.delete(id)
     })
