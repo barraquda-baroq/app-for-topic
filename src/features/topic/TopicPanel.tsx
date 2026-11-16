@@ -7,7 +7,9 @@
 //   ほかの所（開いている列のほかのカードなど）へ移っていれば、そのままにする
 // - Esc は document の keydown で受けるが、小さな画面（クリップの窓など。src/ui/Modal.tsx の isModalOpen）が開いている間は何もしない
 //   （パネルの方が先に登録しているので、Modal の stopPropagation では止まらず、窓とパネルが両方閉じてフォーカスも失うため。開発。
-//   設計: 段階2の 2.）。日本語の変換を取り消す Esc でも閉じない（Modal と同じ）。説明の箱の Esc は詳細の中身が先に止める
+//   設計: 段階2の 2.）。日本語の変換を取り消す Esc でも閉じない（Modal と同じ）。説明の箱の Esc は詳細の中身が先に止める。
+//   フォーカスが中身の外（頭の行の［クリップ］・body）にあって中身が受けられない時も、閉じる前に onEscape を呼び、箱が開いていれば
+//   箱だけを閉じて止める（設計: 段階2の 1.12・2. の「説明の箱が開いている時は先に箱だけを閉じて止める」）
 // - 出る時は右から 180ms（.panel-in。視差効果を減らす設定では動かさない）
 import { useLayoutEffect, useRef, type JSX, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -25,13 +27,17 @@ export interface TopicPanelProps {
   actions?: ReactNode
   /** ［×］・Esc（呼ぶ側が履歴を1つ戻す） */
   onClose: () => void
+  /** Esc で閉じる前に呼ぶ。true を返すと閉じない（中身の説明の箱だけを閉じた時） */
+  onEscape?: () => boolean
   children: ReactNode
 }
 
-export function TopicPanel({ slot, title, actions, onClose, children }: TopicPanelProps): JSX.Element {
+export function TopicPanel({ slot, title, actions, onClose, onEscape, children }: TopicPanelProps): JSX.Element {
   const ref = useRef<HTMLElement>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  const onEscapeRef = useRef(onEscape)
+  onEscapeRef.current = onEscape
 
   useLayoutEffect(() => {
     const panel = ref.current
@@ -47,6 +53,7 @@ export function TopicPanel({ slot, title, actions, onClose, children }: TopicPan
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229) return
       if (isModalOpen()) return
+      if (onEscapeRef.current?.()) return
       onCloseRef.current()
     }
     document.addEventListener('keydown', onKey)

@@ -34,6 +34,43 @@ describe('Modal', () => {
     expect(onClose).toHaveBeenCalledTimes(3)
   })
 
+  // 中身の小さな物（詳細の説明の箱）が開いている時は、フォーカスが中身の外にあっても Esc でそれだけを閉じる（設計: 段階2の 1.12・2.）
+  it('onEscape が true を返す Esc では閉じない（false なら閉じる）。上に重ねた窓がある間は呼ばない', () => {
+    const onClose = vi.fn()
+    let inner = true
+    const onEscape = vi.fn(() => inner)
+    const { rerender } = render(
+      <Modal title="確かめ" onClose={onClose} onEscape={onEscape}>
+        中身
+      </Modal>,
+    )
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(onEscape).toHaveBeenCalledTimes(1)
+    expect(onClose).not.toHaveBeenCalled()
+    inner = false
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(onEscape).toHaveBeenCalledTimes(2)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    // 変換中の Esc では呼ばない
+    fireEvent.keyDown(document.body, { key: 'Escape', isComposing: true })
+    expect(onEscape).toHaveBeenCalledTimes(2)
+    // 上に窓を重ねている間は、上の窓だけが Esc を扱う
+    const onTop = vi.fn()
+    rerender(
+      <>
+        <Modal title="確かめ" onClose={onClose} onEscape={onEscape}>
+          中身
+        </Modal>
+        <Modal title="上の窓" onClose={onTop}>
+          上
+        </Modal>
+      </>,
+    )
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(onTop).toHaveBeenCalledTimes(1)
+    expect(onEscape).toHaveBeenCalledTimes(2)
+  })
+
   it('開いた直後（描いたすぐ後・ブラウザが描く前）に押した Esc も聞き、その時にはもう中へフォーカスを移してある（開発）', () => {
     const onClose = vi.fn()
     const seen: boolean[] = []

@@ -23,8 +23,11 @@ import {
   useApp,
 } from '../../store/appStore'
 import { openTopicSheet, type SheetRouter } from '../../store/devActions'
+import { editionIdOfRecordId } from '../../domain/ids'
+import { markDraftClean, markDraftDirty } from '../../store/draftRegistry'
+import { installLeaveHandlers } from '../../store/lifecycle'
 import { useToasts } from '../../store/uiStore'
-import { KNOWN_TEXTS } from './detailTexts'
+import { DETAIL_TEXTS, KNOWN_TEXTS } from './detailTexts'
 import { PAGE_ID, PanelSlot, resetSheetsForTests, sheetOf, usePanelSlots } from './sheets'
 import { TopicHost } from './TopicHost'
 
@@ -185,6 +188,42 @@ describe('出し方と開け閉め（設計: 段階2の 1.9・2.）', () => {
     expect(screen.queryByTestId('topic-detail')).toBeNull()
   })
 
+  // 端末の保存先が誤りを返す時（iPhone で裏から戻った直後の IndexedDB の接続切れなど）も、読めない時と同じく閉じる（設計: 段階2の 1.9）。
+  // 拒否を受けないと「読み込み中…」のまま止まる
+  it('端末から話題を読めない（保存先が誤りを返す）時は、「読み込み中…」のまま止めずに閉じる', async () => {
+    const p = await startStore()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      vi.spyOn(p, 'getTopics').mockRejectedValue(new Error('端末の保存先を読めません（作り物の誤り）'))
+      const router = renderHost()
+      // ほかの版の話題（開いた版に無いので、端末から読む）
+      await act(async () => {
+        openTopicSheet(router, MONTH.scenes.chain[0], null)
+      })
+      await waitFor(() => expect(sheetOf(router.state.location.state)).toBeNull())
+      expect(document.querySelector('.modal.topic-sheet')).toBeNull()
+      expect(screen.queryByText(DETAIL_TEXTS.loading)).toBeNull()
+      expect(warn).toHaveBeenCalledWith('話題を端末から読めませんでした', expect.any(Error))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('続報のつながりを端末から読めない時は、本文を出したまま、つながりのリンクを出さない', async () => {
+    const p = await startStore()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      vi.spyOn(p, 'topicsOfThread').mockRejectedValue(new Error('端末の保存先を読めません（作り物の誤り）'))
+      const router = renderHost()
+      const detail = await open(router, MONTH.scenes.chain[2])
+      await waitFor(() => expect(warn).toHaveBeenCalledWith('続報のつながりを端末から読めませんでした', expect.any(Error)))
+      expect(screen.getByTestId('topic-detail')).toBe(detail)
+      expect(within(detail).queryByRole('button', { name: /^前の話題:/ })).toBeNull()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('閉じた時に開いた所へ戻せない（フォーカスがどこにも無い）時は、同じ話題の見えているカードの見出しのボタンへ戻す', async () => {
     // jsdom は checkVisibility を持たないので、見えるかどうかを data-shown で決める（src/ui/Modal.test.tsx と同じ）
     const before = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'checkVisibility')
@@ -234,6 +273,37 @@ describe('出し方と開け閉め（設計: 段階2の 1.9・2.）', () => {
       else Reflect.deleteProperty(HTMLElement.prototype, 'checkVisibility')
     }
   })
+
+  // 説明の箱が開いている時の Esc は、フォーカスが中身の外（シートの下の帯・パネルの頭の行の［クリップ］、本文の字を押した後の body）に
+  // あっても、箱だけを閉じて語のボタンへ戻す。次の Esc で詳細を閉じる（設計: 段階2の 1.12 の「Esc で閉じる」・2. の「先に箱だけを閉じて止める」）
+  it.each([
+    ['S のシート', 'S', null, 'clip'],
+    ['S のシート', 'S', null, 'body'],
+    ['L のパネル', 'L', 'world', 'clip'],
+    ['L のパネル', 'L', 'world', 'body'],
+  ] as const)(
+    '%s（幅 %s・差し込み口 %s）: 説明の箱が開いている時は、フォーカスが中身の外（%s）でも Esc で箱だけを閉じ、次の Esc で詳細を閉じる',
+    async (_name, width, side, where) => {
+      setTestWidth(TEST_WIDTHS[width])
+      await startStore()
+      const router = renderHost(['/'], { column: side !== null })
+      const detail = await open(router, topicIdAt(FAKE_TOPIC_SCENES.jpRulingParty), side)
+      expect(detail.getAttribute('data-mode')).toBe(side ? 'panel' : 'sheet')
+      const mark = within(detail).getAllByTestId('term-mark')[0]
+      fireEvent.click(mark)
+      expect(within(detail).getByTestId('term-note')).toBeTruthy()
+      if (where === 'clip') screen.getByTestId('topic-clip').focus()
+      else (document.activeElement as HTMLElement | null)?.blur()
+      expect(detail.contains(document.activeElement)).toBe(false)
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+      expect(within(detail).queryByTestId('term-note')).toBeNull()
+      expect(screen.getByTestId('topic-detail')).toBe(detail)
+      expect(document.activeElement).toBe(mark)
+      expect(sheetOf(router.state.location.state)).not.toBeNull()
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+      await waitFor(() => expect(screen.queryByTestId('topic-detail')).toBeNull())
+    },
+  )
 
   it('前の話題へのリンクは、同じシートの中身を替える（置き換え。履歴を増やさない）', async () => {
     await startStore()
@@ -342,6 +412,35 @@ describe('［知ってる］は閉じた時に書く（設計: 段階2の 1.13�
     expect(rowOf(termId)).toBeTruthy()
   })
 
+  // iPhone の Safari はページを離れる時に visibilitychange を送らず pagehide だけの事がある（設計: 段階2の 1.13・8. の 17）。
+  // 押した分を失わないよう、pagehide でも書き、端末にも保存する。アプリの保存（src/store/lifecycle.ts の saveBeforeLeave。起動の時に
+  // 付ける）より先に書く（capture）ので、saveBeforeLeave が下書きを反映して保存・送信を始める時には、もうストアに入っている
+  it('pagehide でも書いて端末に保存し、その後は「知ってるにしました」だけ。アプリの保存（saveBeforeLeave）より先に書く', async () => {
+    installLeaveHandlers()
+    await startStore()
+    const router = renderHost()
+    const detail = await open(router, topicId)
+    const termId = within(detail).getAllByTestId('term-mark')[0].getAttribute('data-term-id')!
+    fireEvent.click(within(rowOf(termId)).getByTestId('term-known'))
+    // saveBeforeLeave がいちばん初めに呼ぶ下書きの反映の時に、ストアの記録を見る
+    const atLeave: (boolean | null)[] = []
+    const key = Symbol('pagehide-test')
+    markDraftDirty(key, () => atLeave.push(useApp.getState().user.knownTerms[termId]?.on ?? null))
+    try {
+      act(() => {
+        window.dispatchEvent(new Event('pagehide'))
+      })
+    } finally {
+      markDraftClean(key)
+    }
+    expect(atLeave).toEqual([true])
+    expect(useApp.getState().user.knownTerms[termId]).toMatchObject({ on: true })
+    await flushNow()
+    expect(getRawUserRecords().knownTerms[termId]).toMatchObject({ on: true })
+    expect(rowOf(termId).textContent).toContain(KNOWN_TEXTS.pressed)
+    expect(within(rowOf(termId)).queryByRole('button', { name: KNOWN_TEXTS.undo })).toBeNull()
+  })
+
   it('ほかの話題へ替わった時も書く', async () => {
     await startStore()
     const router = renderHost()
@@ -352,6 +451,76 @@ describe('［知ってる］は閉じた時に書く（設計: 段階2の 1.13�
     fireEvent.click(await within(detail).findByRole('button', { name: /^前の話題:/ }))
     await waitFor(() => expect(screen.getByTestId('topic-detail').getAttribute('data-topic-id')).toBe(MONTH.scenes.chain[1]))
     expect(useApp.getState().user.knownTerms[termId]).toMatchObject({ on: true })
+  })
+
+  // 閉じずにほかの話題へ替えると、React は先に次の話題を描き、その後で前の話題の部品の後片付け（ここで書く）を動かす。次の話題が
+  // 描く時に決める「開いた時に知ってるだった語」に、前の話題で押してまだ書いていない語も数える（設計: 段階2の 1.13 の「次に開いた時から
+  // 出さない（本文の印も付けない）」・docs/SPEC.md の 5.8）
+  type FakeTopicOf = (typeof NEWEST.topics)[number]
+  /** a で押すと b でも「知ってる」になる語（b の説明の時点が a の時点以前）を持つ組（無ければ投げる） */
+  function sharedTermOf(pairs: [FakeTopicOf, FakeTopicOf][]): { a: string; b: string; termId: string } {
+    for (const [a, b] of pairs)
+      for (const t of a.terms) {
+        const bt = b.terms.find((x) => x.termId === t.termId)
+        if (bt && (bt.asOf == null || (t.asOf != null && bt.asOf <= t.asOf))) return { a: a.id, b: b.id, termId: t.termId }
+      }
+    throw new Error('同じ語を持つ話題の組がありません')
+  }
+  const termMarkOf = (termId: string) =>
+    screen.getByTestId('topic-detail').querySelector(`[data-testid="term-mark"][data-term-id="${termId}"]`)
+
+  it('L でパネルを閉じずに同じ版の別の話題を開くと、前の話題で押した語は一覧にも本文の印にも出ない（［取り消す］した語は出る）', async () => {
+    setTestWidth(TEST_WIDTHS.L)
+    await startStore()
+    const jp = NEWEST.topics.filter((t) => t.region === 'jp')
+    const { a, b, termId } = sharedTermOf(
+      jp.flatMap((x) => jp.filter((y) => y !== x).map((y): [FakeTopicOf, FakeTopicOf] => [x, y])),
+    )
+    const router = renderHost(['/'], { column: true })
+    // 押す前の B には、その語が一覧に出る
+    expect((await open(router, b, 'world')).getAttribute('data-mode')).toBe('panel')
+    expect(rowOf(termId)).toBeTruthy()
+    // A で押して［取り消す］してから B へ替えると、書かないので B にはまだ出る
+    await open(router, a, 'world')
+    await waitFor(() => expect(screen.getByTestId('topic-detail').getAttribute('data-topic-id')).toBe(a))
+    fireEvent.click(within(rowOf(termId)).getByTestId('term-known'))
+    fireEvent.click(within(rowOf(termId)).getByRole('button', { name: KNOWN_TEXTS.undo }))
+    await open(router, b, 'world')
+    await waitFor(() => expect(screen.getByTestId('topic-detail').getAttribute('data-topic-id')).toBe(b))
+    expect(useApp.getState().user.knownTerms[termId]).toBeUndefined()
+    expect(rowOf(termId)).toBeTruthy()
+    // A で押したまま B へ替えると、A の分を書き、B の一覧にも本文の印にも出さない
+    await open(router, a, 'world')
+    await waitFor(() => expect(screen.getByTestId('topic-detail').getAttribute('data-topic-id')).toBe(a))
+    fireEvent.click(within(rowOf(termId)).getByTestId('term-known'))
+    await open(router, b, 'world')
+    await waitFor(() => expect(screen.getByTestId('topic-detail').getAttribute('data-topic-id')).toBe(b))
+    expect(router.state.historyAction).toBe('REPLACE')
+    expect(useApp.getState().user.knownTerms[termId]).toMatchObject({ on: true })
+    expect(rowOf(termId)).toBeNull()
+    expect(termMarkOf(termId)).toBeNull()
+  })
+
+  it('前の版を開いたまま、続報で押してから「前の話題」へ替えると、前の話題にその語を出さない', async () => {
+    await startStore()
+    const all = MONTH.editions.flatMap((e) => e.topics)
+    const chain = MONTH.scenes.chain.map((id) => all.find((t) => t.id === id)!)
+    const { a, b, termId } = sharedTermOf(chain.slice(1).map((t, i): [FakeTopicOf, FakeTopicOf] => [t, chain[i]]))
+    // 前の話題 B の版（前の版 #/e/{B の版}）を開いている。B は開いた版にあるので、替えた時にすぐ描く
+    await act(async () => {
+      await openEdition(editionIdOfRecordId(b))
+    })
+    expect(useApp.getState().opened.view?.kind).toBe('ready')
+    const router = renderHost()
+    await open(router, a)
+    await waitFor(() => expect(screen.getByTestId('topic-detail').getAttribute('data-topic-id')).toBe(a))
+    await waitFor(() => expect(rowOf(termId)).toBeTruthy())
+    fireEvent.click(within(rowOf(termId)).getByTestId('term-known'))
+    fireEvent.click(await within(screen.getByTestId('topic-detail')).findByRole('button', { name: /^前の話題:/ }))
+    await waitFor(() => expect(screen.getByTestId('topic-detail').getAttribute('data-topic-id')).toBe(b))
+    expect(useApp.getState().user.knownTerms[termId]).toMatchObject({ on: true })
+    expect(rowOf(termId)).toBeNull()
+    expect(termMarkOf(termId)).toBeNull()
   })
 })
 

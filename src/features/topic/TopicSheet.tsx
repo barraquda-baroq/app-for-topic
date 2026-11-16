@@ -14,14 +14,17 @@ export interface TopicSheetProps {
   footer?: ReactNode
   /** ［×］・Esc・背景（呼ぶ側が履歴を1つ戻す） */
   onClose: () => void
+  /** Esc で閉じる前に呼ぶ。true を返すと閉じない（中身の説明の箱だけを閉じた時。フォーカスが下の帯の［クリップ］・body にある時のため） */
+  onEscape?: () => boolean
   children: ReactNode
 }
 
-export function TopicSheet({ title, footer, onClose, children }: TopicSheetProps): JSX.Element {
+export function TopicSheet({ title, footer, onClose, onEscape, children }: TopicSheetProps): JSX.Element {
   return (
     <Modal
       title={title}
       onClose={onClose}
+      onEscape={onEscape}
       footer={footer}
       wide
       className="topic-sheet"

@@ -1187,6 +1187,20 @@ h4 {
     border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
   }
 
+  /* 幅いっぱいのシートは、左右をセーフエリアの分だけ空ける（index.html は viewport-fit=cover。横向きの iPhone では左右に約 47px あり、
+     16px のままだと題と本文の字がノッチ・角の下に入る。一覧の .top-stack-body と同じ max の形）。下の帯（.modal-foot）の無いシート
+     （クリップの窓など）は、中身の下もホームのバーの分だけ空ける（docs/SPEC.md の 14.5。段階2の点検で足した） */
+  .modal-head,
+  .modal-body,
+  .modal-foot {
+    padding-left: max(16px, var(--safe-left));
+    padding-right: max(16px, var(--safe-right));
+  }
+
+  .modal-body:last-child {
+    padding-bottom: calc(16px + var(--safe-bottom));
+  }
+
   .dialog-choices {
     flex-direction: column-reverse;
   }

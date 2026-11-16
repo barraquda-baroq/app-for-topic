@@ -215,10 +215,27 @@ test.describe('設定の文字の大きさ', { tag: ['@pc', '@s'] }, () => {
     await noHorizontalScroll(page)
   })
 
-  test('保存した大きさは、開き直した時に最初の描画から入る（起動の前に <html data-text-size>）', async ({ page }) => {
+  test('保存した大きさで開き直すと、設定の画面で［大］が押された状態', async ({ page }) => {
     await openTop(page, '/settings', { expect: { testId: 'app-settings' }, textSize: 'l' })
     await expect(page.locator('html')).toHaveAttribute('data-text-size', 'l')
     await expect(page.getByTestId('text-size-l')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  // アプリが動いた後は src/ui/Layout.tsx の PrefsEffect も同じ属性を入れるので、アプリの入口（/src/main.tsx）を読ませずに開き、
+  // index.html に埋め込んだ起動の処理（src/launch/launch.js の boot()）だけで入る事を見る（字が一瞬 中 → 大 と跳ばない。
+  // 設計: 段階2の 1.1 の「boot() も最初の描画の前に同じ物を入れる」・1.18）
+  test('保存した大きさは、アプリが動く前（起動の埋め込みだけ）で <html data-text-size> に入る', async ({ page }) => {
+    await page.addInitScript(() =>
+      localStorage.setItem(
+        'topic-studio:prefs',
+        JSON.stringify({ v: 1, appearance: 'white', launchAnimation: false, textSize: 'l' }),
+      ),
+    )
+    await page.route(/\/src\/main\.tsx/, (route) => route.abort())
+    await page.goto('/#/')
+    await expect(page.locator('html')).toHaveAttribute('data-text-size', 'l')
+    // アプリは動いていない（PrefsEffect が入れた物ではない）
+    expect(await page.evaluate(() => typeof window.__ts)).toBe('undefined')
   })
 })
 

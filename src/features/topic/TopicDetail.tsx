@@ -9,8 +9,21 @@
 // 用語の印は1つの話題で語ごとに最初の1か所だけ・開いた時に「知ってる」だった語には付けない（src/domain/termMarks.ts）。
 // 説明の箱の Esc はここ（根の React の onKeyDown）で受け、箱だけを閉じて止める（document に付けると、先に登録したシートの Esc が
 // 先に動いてシートごと閉じる。React はシートの portal の先で受けるので、document の Modal・パネルの Esc まで届かない。設計: 段階2の 2.）。
+// フォーカスが中身の外（シートの下の帯・パネルの頭の行の［クリップ］、本文の字を押した後の body）にある時は、ここでは受けられないので、
+// 箱を閉じる関数を noteCloser で渡し、シート（Modal）とパネルが Esc で閉じる前に呼ぶ（箱が開いていれば箱だけを閉じて止める）。
 // 記録の文は文のまま出す（HTML として読まない。4.6）。props の名前に know・markRead・markSeen を使わない（16.6 の 59）
-import { useEffect, useId, useMemo, useRef, useState, type JSX, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+  type KeyboardEvent,
+  type MutableRefObject,
+  type ReactNode,
+} from 'react'
 import {
   asOfText,
   BREAKING_LABEL,
@@ -61,6 +74,11 @@ export interface TopicDetailProps {
   thread: readonly ThreadTopic[] | null
   /** 前の話題・続報へのリンク（同じシート・パネルの中身を替える） */
   onOpenTopic: (topicId: string) => void
+  /**
+   * 説明の箱を閉じる関数を入れる所（箱が開いていれば閉じて語のボタンへフォーカスを戻し true、開いていなければ false）。シートとパネルが
+   * Esc で閉じる前に呼ぶ（フォーカスが中身の外にあって、根の onKeyDown が受けられない時のため）
+   */
+  noteCloser?: MutableRefObject<(() => boolean) | null>
 }
 
 const NONE: readonly never[] = []
@@ -98,6 +116,7 @@ export function TopicDetail({
   onUndoKnown,
   thread,
   onOpenTopic,
+  noteCloser,
 }: TopicDetailProps): JSX.Element {
   const rootRef = useRef<HTMLElement>(null)
   const titleRef = useRef<HTMLHeadingElement>(null)
@@ -143,6 +162,18 @@ export function TopicDetail({
     e.stopPropagation()
     closeNote()
   }
+  // シート・パネルが Esc で閉じる前に呼ぶ関数（描くたびに今の箱を見る物に替える。描いた直後に替え、押した Esc を取りこぼさない）
+  useLayoutEffect(() => {
+    if (!noteCloser) return
+    noteCloser.current = () => {
+      if (!openTerm) return false
+      closeNote()
+      return true
+    }
+    return () => {
+      noteCloser.current = null
+    }
+  })
 
   /** 欄の文（強調と用語の印つき） */
   const rich = (key: string, text: string): ReactNode => (
@@ -376,8 +407,11 @@ export function TopicDetail({
                 <li key={i} className="topic-source">
                   {s.link ? (
                     <a className="topic-source-link" href={s.link} target="_blank" rel="noopener noreferrer">
-                      {name}
-                      <ExternalLinkIcon small />
+                      {/* 名前とアイコンを1つにまとめる（指の端末でリンクを 34px の高さの flex にしても、アイコンが名前の後に並ぶ。topic.css） */}
+                      <span className="topic-source-label">
+                        {name}
+                        <ExternalLinkIcon small />
+                      </span>
                     </a>
                   ) : (
                     <span className="topic-source-name">{name}</span>

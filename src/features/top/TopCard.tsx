@@ -51,6 +51,13 @@ export function TopCard({ topic, corrected, read, hasNewer = false, editionName 
     btn.focus({ preventScroll: true })
     btn.click()
   }
+  // 見出しのボタンを直に押した時も、開く前にそのボタンへフォーカスを移す。Safari（iPhone・Mac）は押したボタンへフォーカスを移さない
+  // ので、移さないとシート（Modal）とパネルが覚える開いた所が body になり、閉じた時に開いたカードへ戻せない（設計: 段階2の 2. の
+  // 「閉じた時は開いたカードの見出しのボタンへ戻す」）
+  const onButtonClick = (e: MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.focus({ preventScroll: true })
+    onOpen(topic.id)
+  }
   const className = ['top-card', topic.major ? 'is-major' : '', read ? 'is-read' : ''].filter(Boolean).join(' ')
   return (
     <article
@@ -71,7 +78,7 @@ export function TopCard({ topic, corrected, read, hasNewer = false, editionName 
         {corrected ? <span className="top-card-corrected">{CARD_TEXTS.corrected}</span> : null}
       </p>
       <h3 className="top-card-head">
-        <button ref={button} type="button" className="top-card-open" onClick={() => onOpen(topic.id)}>
+        <button ref={button} type="button" className="top-card-open" onClick={onButtonClick}>
           {topic.headline}
         </button>
       </h3>

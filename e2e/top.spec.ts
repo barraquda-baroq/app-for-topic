@@ -220,13 +220,25 @@ test.describe('既読・見た版・追いつきの帯', { tag: ['@pc', '@s', '@
     await expect(page).toHaveURL(/#\/catch-up$/)
   })
 
-  test('最後に見た版の後が1版だけ（夜だけ開く並び）・見た版が無い時は、帯を出さない', async ({ page }) => {
+  test('最後に見た版の後が1版だけ（夜だけ開く並び）は、帯を出さない', async ({ page }) => {
     await openTop(page, '/', { seen: ['2026-11-13-20'] })
     await expect(page.getByTestId('top-card').first()).toBeVisible()
     await expect(page.getByTestId('catch-up-band')).toHaveCount(0)
-    await openTop(page)
+  })
+
+  // 見た版が1つも無い（初めて使う端末）場面は、別のテストにする（同じページで開き直すと、前の seen が端末（Dexie）に残り、
+  // 「見た版が無い時」にならない。Playwright はテストごとに新しい文脈を作るので、ここでは端末が空。設計: 段階2の 1.8 の
+  // 「30日の内に見た版が1つも無い時（初めて使う時）は出さない」）
+  test('見た版が無い時（初めて使う端末）は、帯を出さない', async ({ page }) => {
+    const { editions, newestEditionId } = await openTop(page)
+    const { month } = newestOf(editions)
     await expect(page.getByTestId('top-card').first()).toBeVisible()
     await expect(page.getByTestId('catch-up-band')).toHaveCount(0)
+    // 前提: 出している版より前の版は、どれも見たになっていない（出している版は 3秒で見たになるので見ない）
+    for (const e of month.editions) {
+      if (e.edition.id === newestEditionId) continue
+      expect((await readOf(page, e.edition.id))?.seen ?? false, e.edition.id).toBe(false)
+    }
   })
 })
 

@@ -9,6 +9,8 @@
 //   20回の索引の読み。設計: 段階2の 1.16）
 // - 版がまだ無い時は「まだ版はありません」と届く時期（top-empty。段階3までは本当の事なので残す）、出せる版が無く話題がそろうのを
 //   待っている時は「版を受け取っています…」（top-waiting）。どちらの時も状態の1行・追いつきの帯は出さない（1.7・1.21）。
+//   版の記録が新しい形の物だけで出せる版が無い時は、top-empty を出さず、状態の1行（新しい形の記録です…）を出す（届いているのに
+//   「まだ版はありません」とは言わない。設計: 段階2の 1.7 の 0. と 3.）
 // 言葉は src/features/top/texts.ts、testid は src/features/top/testIds.ts
 import { useEffect, useMemo, useState, type JSX } from 'react'
 import { useParams } from 'react-router-dom'
@@ -17,7 +19,7 @@ import { openEdition, threadsOf, useApp, type OpenedEdition } from '../../store/
 import { useDocumentTitle, useWidthClass } from '../../ui/hooks'
 import { AppHeader } from '../../ui/Layout'
 import { NotFound } from '../../ui/NotFound'
-import { PastEditionStatus } from './EditionStatus'
+import { NewerOnlyStatus, PastEditionStatus } from './EditionStatus'
 import { TopStack } from './TopStack'
 import { TopWide } from './TopWide'
 import type { ReadyView, TopListState } from './TopSection'
@@ -143,6 +145,7 @@ export function TopPage(): JSX.Element {
 /** 出せる版が無い時（前の版を開けない時・待つ間・版がまだ無い時） */
 function TopBlank({ opened, past }: { opened: OpenedEdition; past: boolean }): JSX.Element {
   const kind = opened.view?.kind ?? null
+  const hasNewer = useApp((s) => s.newerEditions.length > 0)
   if (past) {
     // 前の版: 話題がそろうのを待っている版は「版を受け取っています…」、新しい形の記録はそう言い、ほか（端末に無い・30日の外・出せない）は
     // 「この版は端末にありません」。どれも［いちばん新しい版へ］を添える
@@ -162,6 +165,13 @@ function TopBlank({ opened, past }: { opened: OpenedEdition; past: boolean }): J
       <p className="top-waiting" data-testid={testIds.topWaiting} role="status">
         {WAITING_TEXT}
       </p>
+    )
+  // 新しい形の版の記録が届いている（出せる版は無い）: 「まだ版はありません」ではなく、アプリの更新が要る事を言う（設計: 段階2の 1.7 の 0.）
+  if (hasNewer)
+    return (
+      <div className="top-notes">
+        <NewerOnlyStatus />
+      </div>
     )
   return (
     <div className="top-empty" data-testid={testIds.topEmpty}>

@@ -217,6 +217,8 @@ async function sweepScreens(page: Page, width: number, height: number, touch: bo
     await tapSize(box.getByTestId('modal-close'), `${label} 詳細の［×］`)
     await tapSize(box.getByTestId('topic-clip'), `${label} ［クリップ］`, false)
     await tapSize(box.getByTestId('term-known').first(), `${label} ［知ってる］`, false)
+    // 元記事のリンク（文の中の用語の印と違い、1行の独立したリンク。設計: 段階2の 3.4・docs/SPEC.md の 14.5）
+    await tapSize(box.locator('.topic-source-link').first(), `${label} 元記事のリンク`, false)
   }
   // 長い話題の下の端（元記事・下の細い字）まで送っても横にはみ出さない
   await detail.locator('.topic-foot').scrollIntoViewIfNeeded()
@@ -354,6 +356,45 @@ test.describe('横にスクロールしない・押せる所の大きさ（M）'
 
   test('指で押せる所は 34px 以上（ログインの画面・ヘッダー・設定）', async ({ page }) => {
     await touchTargets(page)
+  })
+
+  // 横向きの iPhone 12〜16（844・852px = M）は左右に約 47px・下に約 21px のセーフエリアがある（index.html は viewport-fit=cover）。
+  // 幅いっぱいのシートの題・本文・下の帯の字が、ノッチと角の下に入らない（docs/SPEC.md の 14.5。段階2の点検で足した）。
+  // Chromium は env(safe-area-inset-*) を出せないので、styles.css の --safe-left・--safe-right・--safe-bottom をその値に置き換えて測る
+  test('844×390（横向きの iPhone）: 詳細のシートとクリップの窓の左右・下の帯の無い窓の下が、セーフエリアの分だけ空く', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 844, height: 390 })
+    await denyClipboard(page)
+    const { editions } = await openTop(page)
+    const month = makeFakeMonth(editions!)
+    const newest = month.editions[month.editions.length - 1]
+    await page.evaluate(() => {
+      const root = document.documentElement.style
+      root.setProperty('--safe-left', '47px')
+      root.setProperty('--safe-right', '47px')
+      root.setProperty('--safe-bottom', '21px')
+    })
+    const pad = (l: Locator) =>
+      l.evaluate((e) => {
+        const s = getComputedStyle(e)
+        return { left: s.paddingLeft, right: s.paddingRight, bottom: s.paddingBottom }
+      })
+    // 一覧はもう同じ空け方（max(余白, セーフエリア)）
+    expect(await pad(page.locator('.top-stack-body'))).toMatchObject({ left: '47px', right: '47px' })
+
+    await cardOf(page, newest.edition.order[1]).locator('.top-card-open').click()
+    const sheet = page.locator('.modal.topic-sheet')
+    await expect(sheet.getByTestId('topic-detail')).toBeVisible()
+    for (const part of ['.modal-head', '.modal-body', '.modal-foot'])
+      expect(await pad(sheet.locator(part)), `詳細のシートの ${part}`).toMatchObject({ left: '47px', right: '47px' })
+
+    // 下の帯の無い窓（クリップの窓）は、中身の下もホームのバーの分だけ空ける
+    await sheet.getByTestId('topic-clip').click()
+    const dialog = page.getByTestId('clip-dialog')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('.modal-foot')).toHaveCount(0)
+    expect(await pad(dialog.locator('.modal-body'))).toEqual({ left: '47px', right: '47px', bottom: '37px' })
   })
 
   test.describe('iPhone の Chrome の UA', () => {

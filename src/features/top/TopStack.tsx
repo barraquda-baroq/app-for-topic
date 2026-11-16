@@ -2,7 +2,8 @@
 // 状態の1行・追いつきの帯、いちばん上に「総合」（版の order の順＝今日知るべき順に20本）、その下にジャンルの区切り（政治・経済・
 // テクノロジー・AI・事故・事件・スポーツ・エンタメ。区切りの中も order の順）、いちばん下に「この版の選び方」。
 // 同じ話題が総合とジャンルに2回出る（総合を上から読めば全部読め、ジャンルの区切りは読んだ物が「既読 n件」にまとまるので、2回目は短い）。
-// ジャンルが分からない話題（後の版の値）と新しい形の記録の話題は総合にだけ出す（docs/SPEC.md の 7.1）。
+// 地域が分からない・ジャンルが分からない話題（後の版の値。regionLabel・genreLabel が null）と新しい形の記録の話題は総合にだけ出す
+// （docs/SPEC.md の 7.1 の「国内・世界のどちらにも並べず、総合にだけ出す」。設計: 段階2の 1.3。L だけは「そのほか」に出す）。
 // 切り替えの列は DS の src/features/top/TopPage.tsx の StackedTop の作りを写した: 今の区切りはスクロールの位置で決め（区切りの上の端が
 // 列の下＋16px より上の物のうち最後）、押した直後は押した物に固定（自分でスクロール・押す・キーで外す）。押すと
 // scrollIntoView({ block: 'start', behavior: scrollBehavior() }) と区切りの見出しへフォーカス。下が短くて先頭まで上がれない時は、
@@ -10,7 +11,7 @@
 // 詳細は下からのシート（side は null。どこに出すかは src/features/topic/TopicHost.tsx）。ほかの画面から戻った時は、前のスクロールの
 // 位置と今の区切りへ戻す（src/store/uiStore.ts の useTopUi に版ごとに覚える。読み込み直した・開き直した時は先頭から。設計: 段階2の 2.）
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type JSX, type Ref } from 'react'
-import { genreLabel, GENRE_TAB_LABELS } from '../../domain/fixedTexts'
+import { genreLabel, GENRE_TAB_LABELS, regionLabel } from '../../domain/fixedTexts'
 import { GENRE_VALUES } from '../../domain/types'
 import { useTopUi } from '../../store/uiStore'
 import { scrollBehavior } from '../../ui/motion'
@@ -36,7 +37,9 @@ export interface StackSection {
 
 /**
  * S・M の区切り（総合と7つのジャンル。この順で、切り替えの列も同じ順）。総合は order の全部（新しい形の記録の話題も、その位置に）、
- * ジャンルはそのジャンルの話題だけ（知らないジャンル・新しい形の記録の話題は入れない）
+ * ジャンルはそのジャンルの話題だけ（知らないジャンル・新しい形の記録の話題は入れない）。地域が後の版の値（regionLabel が null）の
+ * 話題も、ジャンルが分かっていてもジャンルの区切りには入れない（docs/SPEC.md の 7.1 は、知らない地域を総合にだけ出すと決めている。
+ * 区切りの items の数で切り替えの列の押せる・押せないも決まるので、そこにも数えない）
  */
 export function stackSections(view: Pick<ReadyView, 'edition' | 'topics' | 'newerTopics'>): StackSection[] {
   const all = orderedItems(view)
@@ -47,7 +50,7 @@ export function stackSections(view: Pick<ReadyView, 'edition' | 'topics' | 'newe
       title: genreLabel(g) ?? g,
       tab: GENRE_TAB_LABELS[g],
       note: null,
-      items: all.filter((it) => it.kind === 'topic' && it.topic.genre === g),
+      items: all.filter((it) => it.kind === 'topic' && it.topic.genre === g && regionLabel(it.topic.region) !== null),
     })),
   ]
 }

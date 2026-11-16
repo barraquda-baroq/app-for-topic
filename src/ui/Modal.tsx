@@ -24,6 +24,11 @@ export interface ModalProps {
   testId?: string
   /** 題の列の［×］の読み上げ（既定「閉じる」） */
   closeLabel?: string
+  /**
+   * Esc で閉じる前に呼ぶ（いちばん上の時だけ）。true を返すと閉じない（中の小さな物だけを閉じた時。詳細の説明の箱など。フォーカスが
+   * 中身の外（下の帯の［クリップ］・body）にあって、中身の部品が Esc を受けられない時のため。段階2で足した。設計: 段階2の 2.）
+   */
+  onEscape?: () => boolean
 }
 
 /** 開いているモーダルの重なり（いちばん上だけが Esc と Tab を扱う） */
@@ -73,11 +78,14 @@ export function Modal({
   className,
   testId,
   closeLabel = '閉じる',
+  onEscape,
 }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
+  const onEscapeRef = useRef(onEscape)
+  onEscapeRef.current = onEscape
   /** 閉じた時にフォーカスを戻す先（開いた時にフォーカスのあった所） */
   const prevRef = useRef<HTMLElement | null>(null)
   /** 中へフォーカスを移すのを useEffect まで待っている（開いた物が外れて、フォーカスが body に落ちていた） */
@@ -99,6 +107,7 @@ export function Modal({
       // 日本語の変換を取り消す Esc（isComposing・Safari は変換の終わりの後に keyCode 229 で来る）では閉じない（DS の src/ui/keys.ts と同じ）
       if (e.key === 'Escape' && !(e.isComposing || e.keyCode === 229)) {
         e.stopPropagation()
+        if (onEscapeRef.current?.()) return
         onCloseRef.current()
         return
       }

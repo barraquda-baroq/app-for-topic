@@ -140,6 +140,21 @@ describe('一覧のカード', () => {
     expect(document.activeElement).toBe(button)
   })
 
+  // Safari（iPhone・Mac）は押したボタンへフォーカスを移さない（jsdom の click も移さない）。開く前に自分で移しておかないと、シートと
+  // パネルが覚える開いた所が body になり、閉じた時に開いたカードへ戻せない（設計: 段階2の 2.）
+  it('見出しのボタンを直に押した時も、onOpen の前にそのボタンへフォーカスを移す（押してもフォーカスが移らないブラウザのため）', () => {
+    const topic = shownOf(4)
+    const onOpen = vi.fn(() => {
+      expect(document.activeElement).toBe(button)
+    })
+    const { card } = renderCard(topic, { onOpen })
+    const button = within(card).getByRole('button')
+    expect(document.activeElement).toBe(document.body)
+    fireEvent.click(button)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    expect(document.activeElement).toBe(button)
+  })
+
   it('字を選んでいる時は、カードを押しても開かない', () => {
     const topic = shownOf(4)
     const { card, onOpen } = renderCard(topic)

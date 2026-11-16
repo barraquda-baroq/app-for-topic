@@ -390,6 +390,17 @@
   color: inherit;
 }
 
+/* 指で操作する端末と S・M では、元記事のリンクの押せる所を 34px 以上にする（docs/SPEC.md の 14.5・設計: 段階2の 3.4。1行の名前は
+   本文の行の高さ 28px しかなく、すぐ下の日時の行に指がかかった。段階2の点検で足した）。名前とアイコンは中の span（.topic-source-label）に
+   まとめてあるので、アイコンは名前の後に並ぶまま */
+@media (max-width: 899px), (pointer: coarse) {
+  .topic-source-link {
+    display: flex;
+    align-items: center;
+    min-height: var(--tap);
+  }
+}
+
 .topic-source-meta {
   font-size: 13px;
   color: var(--text-muted);

@@ -2,7 +2,14 @@
 // まだ届いていない（29分・30分の境）・待っている・出している版がいちばん新しい枠・枠が替わると消える・版が無い時と出せる版が無く待つ時は
 // 出さない・いちばん新しい枠が新しい形の記録の時・同期が落ち着いているか
 import { describe, expect, it } from 'vitest'
-import { editionStatusOf, latestFail, NOT_ARRIVED_AFTER_MIN, syncSettled, type EditionStatusInput } from './editionStatus'
+import {
+  editionStatusOf,
+  latestFail,
+  newerOnlyStatusOf,
+  NOT_ARRIVED_AFTER_MIN,
+  syncSettled,
+  type EditionStatusInput,
+} from './editionStatus'
 import { slotTimeMs } from './jst'
 import type { SyncView } from '../sync/syncView'
 
@@ -116,7 +123,46 @@ describe('editionStatusOf（トップの状態の1行）', () => {
     expect(editionStatusOf({ ...newer, now: at20(5), syncSettled: false })?.kind).toBe('newer')
   })
 
+  // 設計: 段階2の 1.7 の 0. が出さないのは「版の記録が1つも無い（editionIds・newerIds が空）」か「待っている」時だけ。出せる版が無くても、
+  // 新しい形の版の記録が届いていれば 3. へ進む（届いているのに何も言わない・「まだ版はありません」と言わない）
+  it('版の記録が新しい形の物だけ（出している版が無く、待ってもいない）の時は「{枠}版は新しい形の記録です」', () => {
+    const only = base({
+      now: slotTimeMs('2026-11-15', '12') + 130 * MIN,
+      editionIds: [],
+      newerIds: ['2026-11-15-12'],
+      shownId: null,
+    })
+    expect(editionStatusOf(only)).toEqual({ kind: 'newer', text: '12:00版は新しい形の記録です（アプリを更新してください）' })
+    expect(editionStatusOf({ ...only, syncSettled: false })?.kind).toBe('newer')
+    // 待っている時は今のまま出さない（top-waiting）
+    expect(editionStatusOf({ ...only, waitingId: '2026-11-15-12' })).toBeNull()
+  })
+
   it('いちばん新しい枠の版の記録があって出していない時（話題がそろわず、付いていかない前の版など）は、作れなかった・届いていないを出さない', () => {
     expect(editionStatusOf(base({ editionIds: ['2026-11-15-12', '2026-11-15-20'], fails: [fail('2026-11-15-20')] }))).toBeNull()
+  })
+})
+
+describe('newerOnlyStatusOf（出せる版が無く、新しい形の版の記録だけがある時の1行）', () => {
+  const only = (over: Partial<EditionStatusInput> = {}) =>
+    base({ now: slotTimeMs('2026-11-15', '12') + 130 * MIN, editionIds: [], newerIds: ['2026-11-15-12'], shownId: null, ...over })
+
+  it('いちばん新しい枠が新しい形の記録なら、状態の1行と同じ「{枠}版は新しい形の記録です（アプリを更新してください）」', () => {
+    expect(newerOnlyStatusOf(only())).toEqual({ kind: 'newer', text: '12:00版は新しい形の記録です（アプリを更新してください）' })
+  })
+
+  it('状態の1行が言う物が無い時（新しい形の記録が前の枠・同期が落ち着く前）は、決まった文「新しい形の記録（アプリを更新してください）」', () => {
+    expect(newerOnlyStatusOf(only({ newerIds: ['2026-11-14-20'], syncSettled: false }))).toEqual({
+      kind: 'newer',
+      text: '新しい形の記録（アプリを更新してください）',
+    })
+    // 状態の1行が言う物（いちばん新しい枠が作れなかった）があればそれ
+    expect(newerOnlyStatusOf(only({ newerIds: ['2026-11-14-20'], fails: [fail('2026-11-15-12')] }))?.kind).toBe('failed')
+  })
+
+  it('出している版がある・待っている・新しい形の記録が無い時は null（今のまま。状態の1行・top-waiting・top-empty）', () => {
+    expect(newerOnlyStatusOf(only({ shownId: '2026-11-14-20', editionIds: ['2026-11-14-20'] }))).toBeNull()
+    expect(newerOnlyStatusOf(only({ waitingId: '2026-11-15-12' }))).toBeNull()
+    expect(newerOnlyStatusOf(only({ newerIds: [] }))).toBeNull()
   })
 })

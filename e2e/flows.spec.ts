@@ -3,8 +3,11 @@
 // 前の版を待たずに古い話題を開く所だけに使う）。Firebase 無しで、時刻を決め（2026-11-15（日）14:10）、テスト用のログインと作り物の版
 // （e2e/helpers.ts の openTop）で開く。作り物の版はテストの側でも同じ作り方で作って比べる（中身はすべて作り物。docs/SPEC.md の 3.）。
 // - カードを押す → 詳細 → 閉じるとカードは淡く（その場では沈めない）、フォーカスはカードへ戻る → 次にトップを出した時に「既読 n件」へ沈む
+// - S・M: ジャンルの区切りから開いた詳細を閉じると、そのカードへ戻る（Safari の押し方・クリップの窓を開いたままの戻る・幅の往復でも）
 // - L のパネル: 国内のカードは世界の列、世界のカードは国内の列に重なる・重ねた列の一覧は inert・開いた列の次のカードを続けて開ける・
-//   幅を変えるとシートと入れ替わる（フォーカスを失わない）・パネルの上のクリップの窓の Esc は窓だけ閉じる・説明の箱の Esc は箱だけ
+//   幅を変えるとシートと入れ替わる（フォーカスを失わない）・パネルの上のクリップの窓の Esc は窓だけ閉じる・説明の箱の Esc は箱だけ・
+//   閉じずに次のカードへ替えても、前の話題で押した［知ってる］の語は次の話題に出ない
+// - 説明の箱が開いている時の Esc は、フォーカスが中身の外（［クリップ］の後・本文の字を押した後）でも箱だけを閉じる
 // - ヘッダーの版の表示 → 版の一覧 → 前の版（版の表示が替わる・続報あり → 続報のリンク）→［いちばん新しい版へ］
 // - 追いつきの帯 →［追いつく］→ 追いつきの画面（L も真ん中の小さな画面）→ 戻ると帯が消える
 // - 文字の大きさ（設定 → トップのカード・詳細の字が替わり、ヘッダーの字は替わらない）
@@ -149,6 +152,77 @@ test.describe('カード → 詳細 → 既読', { tag: ['@pc', '@s', '@m'] }, (
   })
 })
 
+// S・M は同じ話題が総合とジャンルの区切りに2回出る。閉じた時は開いたカード（ジャンルの区切りの方）へ戻し、画面の外の総合のカードへ
+// 飛ばない（設計: 段階2の 2. の「閉じた時は開いたカードの見出しのボタンへ戻す」）。シートが開いた所へ戻せない道（Safari の押し方・
+// クリップの窓を開いたままの戻る・幅の往復）でも同じ
+test.describe('S・M: ジャンルの区切りから開いた詳細を閉じる', { tag: ['@s', '@m'] }, () => {
+  /** 経済の区切りのカード（総合にも同じ話題がある） */
+  async function economyCard(page: Page): Promise<{ id: string; card: Locator }> {
+    const { editions } = await openTop(page)
+    const { newest } = monthOf(editions)
+    const topic = newest.topics.find((t) => t.genre === 'economy' && !t.major)!
+    const card = page.locator(
+      `[data-testid="top-section"][data-section="economy"] [data-testid="top-card"][data-topic-id="${topic.id}"]`,
+    )
+    await expect(cardOf(page, topic.id)).toHaveCount(1)
+    await card.scrollIntoViewIfNeeded()
+    return { id: topic.id, card }
+  }
+  /** フォーカスがその区切りのカードの見出しのボタンにあり、画面の中に見えている */
+  async function expectFocusBack(card: Locator): Promise<void> {
+    await expect(card.locator('.top-card-open')).toBeFocused()
+    await expect(card.locator('.top-card-open')).toBeInViewport()
+  }
+
+  test('Safari のように押したボタンへフォーカスが移らなくても、［×］で閉じるとそのカードへ戻る', async ({ page }) => {
+    const { id, card } = await economyCard(page)
+    // Safari は押したボタンへフォーカスを移さない（mousedown の既定の動きを止めると Chromium も同じになる）
+    await page.evaluate(() => {
+      document.addEventListener(
+        'mousedown',
+        (e) => {
+          if (e.target instanceof Element && e.target.closest('.top-card-open')) e.preventDefault()
+        },
+        true,
+      )
+    })
+    await card.locator('.top-card-open').click()
+    await expect(page.getByTestId('topic-detail')).toHaveAttribute('data-topic-id', id)
+    await closeDetail(page)
+    await expectFocusBack(card)
+  })
+
+  test('クリップの窓を開いたまま「戻る」で閉じても、そのカードへ戻る', async ({ page }) => {
+    await page.addInitScript(() => {
+      const deny = () => Promise.reject(new DOMException('書き込みは許可されていません', 'NotAllowedError'))
+      if (navigator.clipboard) Object.defineProperty(navigator.clipboard, 'writeText', { value: deny, configurable: true })
+      else Object.defineProperty(navigator, 'clipboard', { value: { writeText: deny }, configurable: true })
+    })
+    const { id, card } = await economyCard(page)
+    await openFromCard(page, card, id)
+    await page.locator('.modal.topic-sheet').getByTestId('topic-clip').click()
+    await expect(page.getByTestId('clip-dialog')).toBeVisible()
+    await page.goBack()
+    await expect(page.getByTestId('topic-detail')).toHaveCount(0)
+    await expect(page.getByTestId('clip-dialog')).toHaveCount(0)
+    await expectFocusBack(card)
+  })
+
+  test('開いたまま幅を L へ広げて戻してから［×］で閉じても、そのカードへ戻る', async ({ page }) => {
+    const { id, card } = await economyCard(page)
+    const size = page.viewportSize()!
+    await openFromCard(page, card, id)
+    await page.setViewportSize({ width: 1024, height: 768 })
+    await expect(page.getByTestId('top-edition')).toHaveAttribute('data-layout', 'wide')
+    await page.setViewportSize(size)
+    await expect(page.getByTestId('top-edition')).toHaveAttribute('data-layout', 'stack')
+    await expect(page.getByTestId('topic-detail')).toHaveAttribute('data-mode', 'sheet')
+    await card.scrollIntoViewIfNeeded()
+    await closeDetail(page)
+    await expectFocusBack(card)
+  })
+})
+
 test.describe('L のパネル', { tag: ['@pc'] }, () => {
   test('国内のカードは世界の列に重ね、重ねた列の一覧だけ inert。開いた列の次のカードも続けて開け（履歴は増えない）、1回閉じれば戻る', async ({
     page,
@@ -290,6 +364,87 @@ test.describe('L のパネル', { tag: ['@pc'] }, () => {
     await expect(box).toHaveCount(0)
     await expect(detail).toBeVisible()
     await expect(mark).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(detail).toHaveCount(0)
+  })
+
+  // 閉じずに同じ列の次のカードへ替えると、前の話題で押した［知ってる］は前の部品が消える時に書く。次の話題はその前に描くので、
+  // まだ書いていない押した語も数えて出さない（設計: 段階2の 1.13 の「次に開いた時から出さない（本文の印も付けない）」・docs/SPEC.md の 5.8）
+  test('パネルで［知ってる］を押し、閉じずに同じ列の次のカードを開くと、その語は次の話題の一覧にも本文の印にも出ない', async ({
+    page,
+  }) => {
+    const { editions } = await openTop(page)
+    const { newest } = monthOf(editions)
+    // 同じ列（国内）の2本で、a で押すと b でも「知ってる」になる語（b の説明の時点が a の時点以前）を持つ組
+    const jp = newest.topics.filter((t) => t.region === 'jp')
+    let pair: { a: string; b: string; termId: string } | null = null
+    for (const a of jp)
+      for (const b of jp) {
+        if (pair || a.id === b.id) continue
+        const t = a.terms.find((x) => {
+          const bt = b.terms.find((y) => y.termId === x.termId)
+          return bt && (bt.asOf == null || (x.asOf != null && bt.asOf <= x.asOf))
+        })
+        if (t) pair = { a: a.id, b: b.id, termId: t.termId }
+      }
+    if (!pair) throw new Error('同じ列に、同じ語を持つ話題の組がありません')
+    const { a, b, termId } = pair
+    const inDetail = (detail: Locator) => detail.locator(`[data-term-id="${termId}"]`)
+
+    // 押す前の b には、その語が一覧に出る
+    let detail = await openFromCard(page, cardOf(page, b), b)
+    await expect(detail.locator(`.topic-term[data-term-id="${termId}"]`)).toHaveCount(1)
+    detail = await openFromCard(page, cardOf(page, a), a)
+    await expect(detail).toHaveAttribute('data-mode', 'panel')
+    await detail.locator(`.topic-term[data-term-id="${termId}"]`).getByTestId('term-known').click()
+    expect(await knownRecord(page, termId)).toBeNull()
+
+    detail = await openFromCard(page, cardOf(page, b), b)
+    await expect.poll(async () => (await knownRecord(page, termId))?.on ?? null).toBe(true)
+    // 一覧（語・説明・［知ってる］）にも、本文の印にも出ない
+    await expect(inDetail(detail)).toHaveCount(0)
+  })
+})
+
+// 説明の箱が開いている時の Esc は、フォーカスが詳細の中身の外（シートの下の帯・パネルの頭の行の［クリップ］、本文の字を押した後の
+// body）にあっても、箱だけを閉じる（設計: 段階2の 1.12 の「Esc で閉じる」・2. の「先に箱だけを閉じて止める」）
+test.describe('説明の箱と Esc', { tag: ['@pc', '@s'] }, () => {
+  test('［クリップ］の後・本文の字を押した後の Esc は箱だけを閉じて語のボタンへ戻り、次の Esc で詳細を閉じる', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const ok = () => Promise.resolve()
+      if (navigator.clipboard) Object.defineProperty(navigator.clipboard, 'writeText', { value: ok, configurable: true })
+      else Object.defineProperty(navigator, 'clipboard', { value: { writeText: ok }, configurable: true })
+    })
+    const { editions } = await openTop(page)
+    const { newest } = monthOf(editions)
+    const topic = newest.topics[FAKE_TOPIC_SCENES.jpRulingParty - 1]
+    const detail = await openFromCard(page, cardOf(page, topic.id), topic.id)
+    const mark = detail.getByTestId('term-mark').first()
+    const box = detail.getByTestId('term-note')
+
+    // ［クリップ］（シートの下の帯・パネルの頭の行。詳細の中身の外）を押した後
+    await mark.click()
+    await expect(box).toBeVisible()
+    await page.getByTestId('topic-clip').click()
+    await expect(page.getByText('クリップボードにコピーしました')).toBeVisible()
+    await expect(page.getByTestId('topic-clip')).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(box).toHaveCount(0)
+    await expect(detail).toBeVisible()
+    await expect(mark).toBeFocused()
+
+    // 本文の押せない字（小見出し）を押して、フォーカスが body に落ちた後
+    await mark.click()
+    await expect(box).toBeVisible()
+    await detail.locator('h4').first().click()
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true)
+    await page.keyboard.press('Escape')
+    await expect(box).toHaveCount(0)
+    await expect(detail).toBeVisible()
+    await expect(mark).toBeFocused()
+
     await page.keyboard.press('Escape')
     await expect(detail).toHaveCount(0)
   })

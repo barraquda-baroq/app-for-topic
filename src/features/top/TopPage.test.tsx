@@ -188,6 +188,30 @@ describe('版が無い時・待つ間（段階0・1の文のまま）', () => {
     expect(screen.queryByTestId('edition-status')).toBeNull()
     expect(screen.queryByTestId('catch-up-band')).toBeNull()
   })
+
+  // 版の記録が新しい形の物だけ（出せる版が無い）の時は、届いているのに「まだ版はありません」「段階3から届く」と言わず、アプリの更新が
+  // 要る事を状態の1行で言う（設計: 段階2の 1.7 の 0. と 3.・1.21）
+  it.each(Object.entries(TEST_WIDTHS))(
+    '%s: 版の記録が新しい形の物だけの時は「まだ版はありません」を出さず、「12:00版は新しい形の記録です（アプリを更新してください）」',
+    (_w, width) => {
+      setTestWidth(width)
+      act(() => useSyncView.setState({ view: { kind: 'synced' } }))
+      renderTop()
+      setStore({
+        editions: [],
+        newerEditions: [NEWEST.edition.id],
+        editionFails: [],
+        opened: { follow: true, view: null, waiting: null },
+      })
+      expect(screen.queryByTestId('top-empty')).toBeNull()
+      expect(screen.queryByTestId('top-waiting')).toBeNull()
+      const status = within(screen.getByTestId('top-page')).getByTestId('edition-status')
+      expect(status.textContent).toBe('12:00版は新しい形の記録です（アプリを更新してください）')
+      expect(status.getAttribute('data-kind')).toBe('newer')
+      expect(status.getAttribute('role')).toBeNull()
+      expect(screen.queryByTestId('catch-up-band')).toBeNull()
+    },
+  )
 })
 
 describe('S・M: 総合とジャンルの区切り', () => {
@@ -227,6 +251,42 @@ describe('S・M: 総合とジャンルの区切り', () => {
     expect(novel).toBeTruthy()
     expect(openIds('all')).toContain(novel.id)
     for (const g of GENRE_VALUES) expect(openIds(g)).not.toContain(novel.id)
+  })
+
+  // docs/SPEC.md の 7.1 は、知らない地域（後の版の値）を「国内・世界のどちらにも並べず、総合にだけ出す」と決めている（設計: 段階2の 1.3）。
+  // ジャンルが分かっていても、ジャンルの区切りには入れない。切り替えの列の押せる・押せないも、その区切りに入る数で決まる
+  it.each([
+    ['S', TEST_WIDTHS.S],
+    ['M', TEST_WIDTHS.M],
+  ])('%s: 地域が分からない話題（後の版の値）は、ジャンルが分かっていても総合にだけ出す', (_w, width) => {
+    setTestWidth(width)
+    renderTop()
+    const view = readyView(NEWEST)
+    const politics = view.topics.filter((t) => t.genre === 'politics')
+    expect(politics.length).toBeGreaterThan(1)
+    const unknown = { ...politics[0], region: 'mars' }
+    setStore({
+      opened: {
+        follow: true,
+        view: { ...view, topics: view.topics.map((t) => (t.id === unknown.id ? unknown : t)) },
+        waiting: null,
+      },
+    })
+    expect(openIds('all')).toContain(unknown.id)
+    for (const g of GENRE_VALUES) expect(openIds(g), g).not.toContain(unknown.id)
+    expect(openIds('politics')).toEqual(politics.slice(1).map((t) => t.id))
+    // 政治の話題がその1本だけなら、政治の区切りは出さず、切り替えの列の［政治］は押せない見た目
+    cleanup()
+    renderTop()
+    const only = view.topics.filter((t) => t.genre !== 'politics' || t.id === unknown.id)
+    setStore({
+      opened: { follow: true, view: { ...view, topics: only.map((t) => (t.id === unknown.id ? unknown : t)) }, waiting: null },
+    })
+    expect(openIds('all')).toContain(unknown.id)
+    expect(sectionOf('politics')).toBeNull()
+    const tab = screen.getAllByTestId('top-switcher-tab')[1]
+    expect(tab.textContent).toBe('政治')
+    expect(tab.getAttribute('aria-disabled')).toBe('true')
   })
 
   it('話題が0本のジャンルは区切りを出さず、切り替えの列では押せない見た目（位置は残す）', () => {

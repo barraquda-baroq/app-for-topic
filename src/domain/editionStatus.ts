@@ -4,11 +4,12 @@
 // - 出すのは、出している版が「時刻の上でいちばん新しい枠（latestSlotAt(now)）」の版でない時だけ。その枠がいちばん新しい間だけ出し、
 //   次の枠の時刻が来れば消える（後から版が届けば版を出す。docs/SPEC.md の 4.7）
 // - 版の記録が1つも無い時（top-empty）・出せる版が無く待っている時（top-waiting）は出さない（段階3までは毎日 12:30・20:30 から
-//   「まだ版はありません」と「12:00版はまだ届いていません」が並ぶため）
+//   「まだ版はありません」と「12:00版はまだ届いていません」が並ぶため）。版の記録が新しい形の物だけの時（出せる版が無い）は出す
+//   （届いているのに「まだ版はありません」とは言わない。設計: 段階2の 1.7 の 0. と 3.・1.21）
 // - 「まだ届いていません」は枠の時刻の30分後から、同期が落ち着いている時だけ（オフラインで起動した時に一瞬でも出さない。設計: 段階2の 8. の 5）
 // 言葉は D9 のとおり静かに（role="status" にしない・知らせない）。文はこのファイルに置き、画面の言葉（src/features/top/texts.ts）から
 // 読み直す（domain は画面のファイルを読まない）
-import { editionFailedText, editionNameText, editionSlotText } from './fixedTexts'
+import { editionFailedText, editionNameText, editionSlotText, FIXED_TEXTS } from './fixedTexts'
 import { editionIdOf, parseEditionId } from './ids'
 import { latestSlotAt, slotTimeMs } from './jst'
 import type { SyncView } from '../sync/syncView'
@@ -87,7 +88,8 @@ export interface EditionStatusInput {
 
 /**
  * トップの状態の1行（出さない時は null）。決め方の順（設計: 段階2の 1.7）:
- * 0. 出している版が無い（版の記録が1つも無い top-empty・出せる版が無く待っている top-waiting）→ 出さない
+ * 0. 出している版が無く、版の記録が1つも無い（editionIds・newerIds が空。top-empty）か、出せる版が無く待っている（top-waiting）→ 出さない。
+ *    出している版が無くても、新しい形の版の記録などがあれば下へ進む（出せる版が無いのに版は届いている時）
  * 1. 出している版がいちばん新しい枠の版 → 出さない
  * 2. 出している版より新しい版を待っている → 「{版の名前}を受け取っています…」
  * 3. いちばん新しい枠の版が新しい形の記録 → 「{枠}版は新しい形の記録です（アプリを更新してください）」
@@ -95,7 +97,7 @@ export interface EditionStatusInput {
  * 5. いちばん新しい枠に版も印も無く、枠の時刻から30分たち、同期が落ち着いている → 「{枠}版はまだ届いていません」
  */
 export function editionStatusOf(input: EditionStatusInput): EditionStatus | null {
-  if (input.shownId === null) return null
+  if (input.shownId === null && (input.waitingId !== null || (!input.editionIds.length && !input.newerIds.length))) return null
   const latest = latestSlotAt(input.now)
   const latestId = editionIdOf(latest.date, latest.slot)
   if (input.shownId === latestId) return null
@@ -107,4 +109,16 @@ export function editionStatusOf(input: EditionStatusInput): EditionStatus | null
   if (input.syncSettled && input.now >= slotTimeMs(latest.date, latest.slot) + NOT_ARRIVED_AFTER_MIN * MINUTE_MS)
     return { kind: 'not-arrived', text: notArrivedText(latest.slot) }
   return null
+}
+
+/**
+ * 付いていくトップに出せる版が無く、待ってもいないが、新しい形の版の記録がある時に、空の表示（top-empty の「まだ版はありません」）の
+ * 代わりに出す1行（当たらない時は null）。状態の1行（editionStatusOf）が言う物があればそれ（いちばん新しい枠が新しい形の記録なら
+ * 「{枠}版は新しい形の記録です（アプリを更新してください）」）、無ければ決まった文「新しい形の記録（アプリを更新してください）」。
+ * 版が届いているのに「まだ版はありません」「段階3から届く」と言わず、アプリの更新が要る事を言う（docs/SPEC.md の 12.・7.8。
+ * 設計: 段階2の 1.7 の 0. と 3.・1.21）
+ */
+export function newerOnlyStatusOf(input: EditionStatusInput): EditionStatus | null {
+  if (input.shownId !== null || input.waitingId !== null || !input.newerIds.length) return null
+  return editionStatusOf(input) ?? { kind: 'newer', text: FIXED_TEXTS.newerRecord }
 }

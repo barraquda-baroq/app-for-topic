@@ -5,6 +5,7 @@
 // - 待っている（withholdNewest）→「11/15（日）12:00版を受け取っています…」
 // - いちばん新しい枠が新しい形の記録（newerEdition）→「12:00版は新しい形の記録です（アプリを更新してください）」
 // - 版が無い時（top-empty）と、出せる版が無く待つ時（onlyNewest＋withholdNewest: 20。top-waiting）は1行を出さない
+// - 版の記録が新しい形の物だけ（onlyNewest＋newerEdition。出せる版が無い）の時は「まだ版はありません」を出さず、1行で新しい形の記録と言う
 // - 同期の表示が null・offline の時は「まだ届いていません」を出さない（落ち着いてから出す）
 import { expect, test } from '@playwright/test'
 import { collectDiagnosticsOnFailure, openTop, setSyncView } from './helpers'
@@ -77,6 +78,23 @@ test.describe('トップの状態の1行', { tag: ['@s'] }, () => {
     await expect(page.getByTestId('top-empty')).toBeVisible()
     await expect(page.getByTestId('edition-status')).toHaveCount(0)
     await expect(page.getByTestId('catch-up-band')).toHaveCount(0)
+  })
+
+  // 設計: 段階2の 1.7 の 0. が1行を出さないのは、版の記録が1つも無い時と待っている時だけ。新しい形の版の記録が届いていれば、
+  // 「まだ版はありません」「段階3から届く」と事実と違う事を言わず、アプリの更新が要る事を言う（1.7 の 3.・1.21）
+  test('版の記録が新しい形の物だけの時は「まだ版はありません」を出さず「12:00版は新しい形の記録です（アプリを更新してください）」', async ({
+    page,
+  }) => {
+    await openTop(page, '/', {
+      editions: { ...UNTIL_NOON, onlyNewest: true, extras: ['newerEdition'] },
+      expect: { testId: 'edition-status' },
+    })
+    const status = page.getByTestId('edition-status')
+    await expect(status).toHaveText('12:00版は新しい形の記録です（アプリを更新してください）')
+    await expect(status).toHaveAttribute('data-kind', 'newer')
+    await expect(page.getByTestId('top-empty')).toHaveCount(0)
+    await expect(page.getByTestId('top-waiting')).toHaveCount(0)
+    await expect(page.getByTestId('top-edition')).toHaveCount(0)
   })
 
   test('出せる版が1つも無く待っている時は「版を受け取っています…」だけで、1行を出さない', async ({ page }) => {

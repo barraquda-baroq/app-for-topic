@@ -43,7 +43,17 @@ function setUp() {
   }
 }
 
-function Harness({ slot, onClose, withModal = false }: { slot: HTMLElement; onClose: () => void; withModal?: boolean }) {
+function Harness({
+  slot,
+  onClose,
+  withModal = false,
+  onEscape,
+}: {
+  slot: HTMLElement
+  onClose: () => void
+  withModal?: boolean
+  onEscape?: () => boolean
+}) {
   const [open, setOpen] = useState(true)
   const [modal, setModal] = useState(withModal)
   if (!open) return null
@@ -57,6 +67,7 @@ function Harness({ slot, onClose, withModal = false }: { slot: HTMLElement; onCl
           onClose()
           setOpen(false)
         }}
+        onEscape={onEscape}
       >
         <h3 className="topic-title" tabIndex={-1}>
           見出し
@@ -114,6 +125,22 @@ describe('Esc（設計: 段階2の 2.）', () => {
     fireEvent.keyDown(document.body, { key: 'Escape', isComposing: true })
     fireEvent.keyDown(document.body, { key: 'Escape', keyCode: 229 })
     expect(onClose).not.toHaveBeenCalled()
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  // 説明の箱が開いている時は、フォーカスが中身の外（頭の行の［クリップ］・body）にあっても、Esc で箱だけを閉じる（設計: 段階2の 1.12・2.）
+  it('onEscape が true を返す Esc では閉じない（中身の箱だけを閉じた時）。false なら閉じる', () => {
+    const { slot } = setUp()
+    const onClose = vi.fn()
+    let inner = true
+    const onEscape = vi.fn(() => inner)
+    render(<Harness slot={slot} onClose={onClose} onEscape={onEscape} />)
+    screen.getByTestId('topic-clip').focus()
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(onEscape).toHaveBeenCalledTimes(1)
+    expect(onClose).not.toHaveBeenCalled()
+    inner = false
     fireEvent.keyDown(document.body, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
   })
