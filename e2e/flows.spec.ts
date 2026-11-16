@@ -240,7 +240,9 @@ test.describe('L のパネル', { tag: ['@pc'] }, () => {
     expect(await sheetInHistory(page)).toEqual({ kind: 'topic', id: first.id, side: 'world' })
     expect(await columnList(page, 'world').evaluate((e) => (e as HTMLElement).inert)).toBe(true)
     expect(await columnList(page, 'jp').evaluate((e) => (e as HTMLElement).inert)).toBe(false)
-    // パネルは右の列の上にちょうど重なる（後ろの一覧は使えるまま。#root を inert にしない）
+    // パネルは右の列の上にちょうど重なる（後ろの一覧は使えるまま。#root を inert にしない）。パネルは右から 180ms で出て
+    // （.panel-in の translate）、箱の位置は動きの途中の translate を含むので、動き終わってから測る
+    await slot.locator('.topic-panel').evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
     const [panelBox, listBox] = [await slot.locator('.topic-panel').boundingBox(), await columnList(page, 'world').boundingBox()]
     expect(panelBox && listBox && Math.abs(panelBox.x - listBox.x) <= 1 && Math.abs(panelBox.width - listBox.width) <= 1).toBe(
       true,
