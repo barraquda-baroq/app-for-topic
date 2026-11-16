@@ -79,6 +79,7 @@ interface LaunchApi {
   appReady(): void
   active(): boolean
   resolveAppearance(prefs: unknown, systemDark: boolean): Appearance
+  resolveTextSize(prefs: unknown): 's' | 'm' | 'l'
   animationTheme(appearance: string): string
   decide(env: Env): 'none' | 'play' | 'still'
   createController(o: ControllerOptions): Controller
@@ -179,6 +180,7 @@ beforeEach(() => {
   window.history.replaceState(null, '', '/')
   document.head.innerHTML = '<meta name="theme-color" content="#ffffff">'
   document.documentElement.removeAttribute('data-theme')
+  document.documentElement.removeAttribute('data-text-size')
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(fakeContext as never)
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance'] })
   // 時計（performance.now）は偽の時計に clockOffset を足した物（重い1コマの分だけ、タイマーより先に進むことがある）
@@ -278,6 +280,36 @@ describe('外観（最初の描画の前）', () => {
     setWebdriver(true)
     expect(load().boot()).toBe('dark')
     expect(document.querySelector('meta[name="theme-color"]')!.getAttribute('content')).toBe('#17181b')
+  })
+
+  it('boot は記事の字の大きさも <html data-text-size> に入れる（無い・知らない値・壊れた設定は中。段階2。設計: 段階2の 1.1）', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ v: 1, appearance: 'white', launchAnimation: false, textSize: 'l' }))
+    load().boot()
+    expect(document.documentElement.getAttribute('data-text-size')).toBe('l')
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ textSize: 's', launchAnimation: false }))
+    load().boot()
+    expect(document.documentElement.getAttribute('data-text-size')).toBe('s')
+
+    for (const stored of [JSON.stringify({ launchAnimation: false }), JSON.stringify({ textSize: 'xl' }), '{壊れた', '[1]']) {
+      document.documentElement.removeAttribute('data-text-size')
+      localStorage.setItem(PREFS_KEY, stored)
+      setWebdriver(true)
+      load().boot()
+      expect(document.documentElement.getAttribute('data-text-size'), stored).toBe('m')
+    }
+  })
+
+  it('字の大きさの決め方は src/store/uiStore.ts の migratePrefs と同じ（小・中・大のほかは中）', () => {
+    const api = load()
+    expect(api.resolveTextSize({ textSize: 's' })).toBe('s')
+    expect(api.resolveTextSize({ textSize: 'm' })).toBe('m')
+    expect(api.resolveTextSize({ textSize: 'l' })).toBe('l')
+    expect(api.resolveTextSize({ textSize: 'L' })).toBe('m')
+    expect(api.resolveTextSize({ textSize: 16 })).toBe('m')
+    expect(api.resolveTextSize({ textSize: 'hasOwnProperty' })).toBe('m')
+    expect(api.resolveTextSize({})).toBe('m')
+    expect(api.resolveTextSize(null)).toBe('m')
   })
 })
 

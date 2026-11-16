@@ -1,7 +1,8 @@
-// 端末ごとの表示の設定（外観・起動アニメーション）とお知らせ（トースト）。
+// 端末ごとの表示の設定（外観・起動アニメーション・記事の字の大きさ）とお知らせ（トースト）。
 // 表示の設定は localStorage の topic-studio:prefs に保存する（同期しない。使えない環境でも既定値で動く。docs/SPEC.md の 7.5・14.3）。
 // DS の src/store/uiStore.ts から、DS だけの設定（最後のモード・登録の画面・リストの畳んだ状態）を外した物
-// （DS は NS の物から、resolveAppearance・migratePrefs・THEME_COLORS・トースト・attempt・アプリの更新の仕組みを写した）
+// （DS は NS の物から、resolveAppearance・migratePrefs・THEME_COLORS・トースト・attempt・アプリの更新の仕組みを写した）。
+// 段階2で、記事の字の大きさ（textSize）と、端末に覚えないトップの画面の状態（useTopUi）を足した
 import { create } from 'zustand'
 import { DomainError } from '../domain/types'
 
@@ -10,6 +11,9 @@ export type Appearance = 'white' | 'dark' | 'deep-dark'
 /** 外観の設定。system は端末の設定（ライト／ダーク）に合わせてホワイトかダークになる */
 export type AppearanceMode = 'system' | Appearance
 
+/** 記事の字の大きさ。小・中・大（docs/SPEC.md の 9.。<html data-text-size> に入れ、src/styles.css の --read-size などを替える） */
+export type TextSize = 's' | 'm' | 'l'
+
 export interface Prefs {
   appearance: AppearanceMode
   /**
@@ -17,19 +21,32 @@ export interface Prefs {
    * （false の時だけ出さない）
    */
   launchAnimation: boolean
+  /**
+   * 記事の字の大きさ（既定は中。カードの見出し・要約、詳細の本文・用語の説明・元記事だけに効く）。src/launch/launch.js も最初の描画の
+   * 前に読んで <html data-text-size> に入れる（字の大きさが一瞬跳ばないように。設計: 段階2の 1.1・1.18）
+   */
+  textSize: TextSize
 }
 
 const APPEARANCE_MODES: readonly AppearanceMode[] = ['system', 'white', 'dark', 'deep-dark']
+export const TEXT_SIZES: readonly TextSize[] = ['s', 'm', 'l']
 
-/** 初めは「端末の設定に合わせる」・起動アニメーションはオン */
+/**
+ * 初めは「端末の設定に合わせる」・起動アニメーションはオン・記事の字は中（16px。読む画面の本文として 15px より楽なため。開発。
+ * 設計: 段階2の 3.4。■9 で確かめる）
+ */
 export const DEFAULT_PREFS: Prefs = {
   appearance: 'system',
   launchAnimation: true,
+  textSize: 'm',
 }
 
 export const PREFS_KEY = 'topic-studio:prefs'
 
-/** 保存形式の版（保存する時に v として書く。設定の値には含めない） */
+/**
+ * 保存形式の版（保存する時に v として書く。設定の値には含めない）。段階2で textSize を足しても上げない（無い・知らない値は既定に
+ * 戻すだけで、前の版の設定もそのまま読めるため。設計: 段階2の 1.1）
+ */
 export const PREFS_VERSION = 1
 
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
@@ -43,6 +60,7 @@ export function migratePrefs(stored: unknown): Prefs {
   return {
     appearance: oneOf(stored.appearance, APPEARANCE_MODES, d.appearance),
     launchAnimation: bool(stored.launchAnimation, d.launchAnimation),
+    textSize: oneOf(stored.textSize, TEXT_SIZES, d.textSize),
   }
 }
 
@@ -86,8 +104,8 @@ function savePrefs(prefs: Prefs): void {
 
 /** 今の設定（関数を除く） */
 function currentPrefs(s: PrefsState): Prefs {
-  const { appearance, launchAnimation } = s
-  return { appearance, launchAnimation }
+  const { appearance, launchAnimation, textSize } = s
+  return { appearance, launchAnimation, textSize }
 }
 
 export const usePrefs = create<PrefsState>((set, get) => ({
@@ -97,6 +115,54 @@ export const usePrefs = create<PrefsState>((set, get) => ({
     savePrefs(currentPrefs(get()))
   },
 }))
+
+// ---------- トップの画面の状態（端末に覚えない。docs/SPEC.md の 7.5・9.。設計: 段階2の 1.1・1.6・2.） ----------
+
+/**
+ * 版ごとの、トップを離れた時の位置（ほかの画面から戻った時に戻す）。scroll は、S・M はページ（'page'）、L は列ごと（'jp'・'world'。
+ * ページは動かさず列の中だけスクロールするため）の位置（px）。section は S・M の切り替えの列の今の区切り（L は null）
+ */
+export interface TopPlace {
+  scroll: Record<string, number>
+  section: string | null
+}
+
+interface TopUiState {
+  /**
+   * 開いている「既読 n件」（foldKey(版の id, 区切り) → true）。アプリを開くたびに全部畳んで始める（端末に覚えない。DS の S・M の
+   * リストと同じ作り）
+   */
+  openFolds: Record<string, true>
+  /** 版ごとの、トップを離れた時の位置（読み込み直した・開き直した時は無いので先頭から） */
+  places: Record<string, TopPlace>
+  /** 「既読 n件」を開く・畳む */
+  setFoldOpen: (editionId: string, section: string, open: boolean) => void
+  /** トップを離れる時の位置を覚える */
+  setPlace: (editionId: string, place: TopPlace) => void
+}
+
+/** 「既読 n件」の開け閉めの鍵（版の id と区切り。区切りは S・M の 'all'・ジャンル、L の 'jp'・'world'・'other'） */
+export function foldKey(editionId: string, section: string): string {
+  return `${editionId}\n${section}`
+}
+
+/** トップの画面の状態（開いている間だけ保つ。localStorage に書かない） */
+export const useTopUi = create<TopUiState>((set, get) => ({
+  openFolds: {},
+  places: {},
+  setFoldOpen: (editionId, section, open) => {
+    const next = { ...get().openFolds }
+    if (open) next[foldKey(editionId, section)] = true
+    else delete next[foldKey(editionId, section)]
+    set({ openFolds: next })
+  },
+  setPlace: (editionId, place) => set({ places: { ...get().places, [editionId]: place } }),
+}))
+
+/** テスト用: トップの画面の状態を、アプリを開いた時の物に戻す */
+export function resetTopUiForTests(): void {
+  useTopUi.setState({ openFolds: {}, places: {} })
+}
 
 // ---------- お知らせ（トースト。DS の docs/SPEC.md の 3.9） ----------
 

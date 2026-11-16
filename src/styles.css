@@ -9,7 +9,11 @@
    - deep-dark（ディープダーク）: さらに暗く、明るい色を抑える
    差し色（--accent・--primary・--switch-on・--selection）とログインの画面の地（--cover）は、3つの外観ともグレーの濃淡
    （DS と同じ値。起動アニメーションとアプリのアイコンのオレンジは別の物で、ここでは使わない）。
-   色の値は DS の docs/SPEC.md の 4.5 の表と同じ（src/styles.test.ts で確かめる）。TS だけの色（重大印など）は段階2で、この3つの規則に足す。
+   色の値は DS の docs/SPEC.md の 4.5 の表と同じ（src/styles.test.ts で確かめる）。
+   TS だけの色（docs/SPEC.md の 10.。段階2）: 色を新しく持つのは本文の強調の --emphasis だけで、3つの外観の規則それぞれに書く
+   （オレンジの字＋太字。作者が A を選んだ。2026-11-15。オレンジは起動アニメーション・アイコン・本文の強調だけ。D8）。
+   重大印・既読・訂正・用語の印の色は、今の色の別名にして、外観で変わらない :root に置く（差し色はグレー。D22。名前を役で分けて
+   おけば、見本の答えで外観ごとに変える時も部品を直さない。開発。設計: 段階2の 3.1）。ジャンルには色を付けない。
    部品はこの変数だけを使い、#fff などの色を直接書かない。字の色は、置く地の上で 4.5:1 以上。
 
    等幅の英数字の書体（Roboto Mono。latin の 300・400・500・600）は src/main.tsx で読み込む（ここで @import すると同じ
@@ -48,6 +52,8 @@
   --dur-backdrop: 120ms; /* 小さな画面の後ろ（fade-in） */
   --dur-pop: 140ms; /* 小さな画面・下からのシート（pop-in） */
   --dur-menu: 120ms; /* メニュー（pop-in） */
+  --dur-panel: 180ms; /* L の列に重ねる詳細のパネル（.panel-in。DS と同じ） */
+  --dur-fold: 180ms; /* 畳む・開く（.fold。「既読 n件」。DS と同じ） */
   --dur-toast: 160ms; /* お知らせが出る・消える */
 
   /* 大きさ */
@@ -67,6 +73,38 @@
   /* 影（NS の値。どの外観でも同じ物） */
   --shadow-knob: 0 1px 2px rgb(0 0 0 / 25%);
   --shadow-segmented: 0 1px 2px rgb(0 0 0 / 12%);
+
+  /* TS だけの色のうち、今の色の別名の物（docs/SPEC.md の 10.。設計: 段階2の 3.1。外観ごとの値は元の色が持つ）。
+     線の色は地と 3:1 以上、字の色は5つの地で 4.5:1 以上（src/styles.test.ts） */
+  --term-line: var(--text-faint); /* 本文の中の用語の印の点線 */
+  --major-line: var(--text); /* 重大印のカードの左の縦線・「重大」の札の枠（オレンジは使わない） */
+  --read-text: var(--text-muted); /* 既読のカードの見出し */
+  --correction-ground: var(--surface-3); /* 訂正の箱の地 */
+  --correction-line: var(--border-strong); /* 訂正の箱の左の線 */
+
+  /* 記事の字の大きさ（設定の［小｜中｜大］。<html data-text-size>。docs/SPEC.md の 9.・7.5。設計: 段階2の 1.18・3.4）。
+     ここは中（既定）。小・大は下の :root[data-text-size] で替える。効くのはカードの見出し・要約、詳細の本文・用語の説明・元記事だけで、
+     ヘッダー・切り替えの列・ボタン・設定は替えない（360px の並びを崩さない） */
+  --read-size: 16px; /* カードの要約・詳細の本文・用語の説明 */
+  --read-head: 17px; /* カードの見出し */
+  --read-title: 20px; /* 詳細の見出し */
+  --read-line: 1.75; /* 本文の行の高さ */
+}
+
+/* 記事の字の大きさ: 小（今の body の 15px）・大。<html data-text-size> は最初の描画の前は src/launch/launch.js の boot()、
+   起動後は src/ui/Layout.tsx の PrefsEffect が入れる（字の大きさが一瞬跳ばないように） */
+:root[data-text-size='s'] {
+  --read-size: 15px;
+  --read-head: 16px;
+  --read-title: 19px;
+  --read-line: 1.7;
+}
+
+:root[data-text-size='l'] {
+  --read-size: 18px;
+  --read-head: 19px;
+  --read-title: 22px;
+  --read-line: 1.75;
 }
 
 @media (min-width: 900px) {
@@ -123,6 +161,9 @@
   --shadow: 0 1px 2px rgb(30 30 40 / 6%), 0 4px 16px rgb(30 30 40 / 6%);
   --shadow-sm: 0 1px 2px rgb(30 30 40 / 4%);
   --shadow-lg: 0 10px 40px rgb(20 20 30 / 22%);
+  /* 本文の強調（オレンジの字。.emph だけで使う）。5つの地（--bg・--surface・--surface-2・--surface-3・--accent-soft）で 4.5:1 を
+     守るいちばん明るい所（10. の例の #ad5d00 は --bg で 4.47 と落ちる。設計: 段階2の 3.2。■1 で確かめる） */
+  --emphasis: #9a5200;
   color-scheme: light;
 }
 
@@ -174,6 +215,8 @@
   --shadow: 0 1px 2px rgb(0 0 0 / 35%), 0 4px 16px rgb(0 0 0 / 30%);
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow-lg: 0 10px 40px rgb(0 0 0 / 60%);
+  /* 本文の強調（作者が見本で見た色のまま。設計: 段階2の 3.2） */
+  --emphasis: #f0a25e;
   color-scheme: dark;
 }
 
@@ -225,6 +268,8 @@
   --shadow: 0 1px 2px rgb(0 0 0 / 50%);
   --shadow-sm: none;
   --shadow-lg: 0 10px 40px rgb(0 0 0 / 70%);
+  /* 本文の強調（明るい色を抑える外観なので、本文の字 --text より暗いオレンジ。設計: 段階2の 3.2） */
+  --emphasis: #c08050;
   color-scheme: dark;
 }
 
@@ -303,6 +348,13 @@ h4 {
   font-variant-numeric: tabular-nums;
   /* 読み込んでいない太さ（700 など）を端末が太らせると字がにじむので、太らせない */
   font-synthesis-weight: none;
+}
+
+/* 本文の強調（D24・docs/SPEC.md の 5.12・9.）: オレンジの字＋太字（作者が A を選んだ。2026-11-15）。色だけに頼らず太字も付ける。
+   付けるのは src/features/topic/RichText.tsx の <strong class="emph"> だけ。--emphasis を使うのはこの規則だけ（src/screensCss.test.ts） */
+.emph {
+  color: var(--emphasis);
+  font-weight: 700;
 }
 
 /* ===== レイアウト ===== */
@@ -689,6 +741,52 @@ h4 {
   font-size: 14px;
 }
 
+/* ===== 畳む・開く・重ねるパネル（DS の src/styles.css から。docs/SPEC.md の 9.） ===== */
+
+/* 畳む・開く（高さを 180ms で。DS の docs/SPEC.md の 4.9）。.fold の中に1つだけ要素を置き、畳む時は .is-closed を付ける（「既読 n件」）。
+   畳んでいる間は中身を見えなくし（visibility。フォーカス・読み上げからも外れる）、閉じる動きが終わってから隠す。
+   中身は overflow: hidden で切れるので、中の部品のフォーカスの枠は内側（outline-offset: -2px）にするか、左右に余白を取る */
+.fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--dur-fold) ease;
+}
+
+.fold > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fold.is-closed {
+  grid-template-rows: 0fr;
+}
+
+.fold.is-closed > * {
+  visibility: hidden;
+  transition: visibility 0s linear var(--dur-fold);
+}
+
+/* L の列の上に重ねる詳細のパネルが出る時（右から 180ms。DS の物。視差効果を減らす設定では動かさない） */
+.panel-in {
+  animation: slide-in-right var(--dur-panel) ease-out;
+}
+
+/* L の列の、詳細のパネルの差し込み口（src/features/topic/sheets.ts の PanelSlot。列の一覧の兄弟に置き、列の箱
+   （position: relative）いっぱいに重ねる。空の間は箱を持たず、後ろの一覧を押せる。設計: 段階2の 1.4） */
+.panel-slot {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panel-slot:empty {
+  display: none;
+}
+
 /* ===== バッジ ===== */
 .badge {
   display: inline-flex;
@@ -999,6 +1097,13 @@ h4 {
   }
 }
 
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    translate: 24px 0;
+  }
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;
@@ -1073,7 +1178,10 @@ h4 {
     padding: 0;
   }
 
-  .modal {
+  /* 広い小さな画面（.wide。話題の詳細のシート）も幅いっぱいにする（.modal.wide の min(760px, 100%) のままだと、M の 761〜899px で
+     左右に隙間のあるシートになる。段階2の通しの確かめで見つけた。docs/SPEC.md の 14.5 の「S・M で下からのシート」） */
+  .modal,
+  .modal.wide {
     width: 100%;
     max-height: calc(92dvh - var(--kb, 0px));
     border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;

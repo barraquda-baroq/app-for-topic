@@ -1,4 +1,4 @@
-// 線のアイコン（DS の src/ui/icons.test.tsx から）: どれも同じ作り（24 四方・線 1.8・丸い端・文字の色）か、段階0で使う物がそろっているか
+// 線のアイコン（DS の src/ui/icons.test.tsx から）: どれも同じ作り（24 四方・線 1.8・丸い端・文字の色）か、段階0・2で使う物がそろっているか
 import { cleanup, render } from '@testing-library/react'
 import type { ComponentType } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -16,8 +16,20 @@ const LINE_ICONS = Object.entries(icons).filter(([name, value]) => name.endsWith
 const svgOf = (el: HTMLElement) => el.querySelector('svg') as SVGSVGElement
 
 describe('線のアイコン', () => {
-  it('段階0の画面で使うアイコン（設定の歯車・閉じる×・追加の手順の✓と下向きの矢印）がそろっている', () => {
-    expect(LINE_ICONS.map(([name]) => name).sort()).toEqual(['CheckIcon', 'DownloadIcon', 'GearIcon', 'XIcon'])
+  it('段階0・2の画面で使うアイコンがそろっている（段階0の歯車・×・✓・下向きの矢印、段階2の山形・クリップ・同期の雲・外へのリンク）', () => {
+    expect(LINE_ICONS.map(([name]) => name).sort()).toEqual([
+      'CheckIcon',
+      'ChevronLeftIcon',
+      'ChevronRightIcon',
+      'CloudIcon',
+      'CloudOffIcon',
+      'CopyIcon',
+      'DownIcon',
+      'DownloadIcon',
+      'ExternalLinkIcon',
+      'GearIcon',
+      'XIcon',
+    ])
   })
 
   it.each(LINE_ICONS)('%s: 24 四方・線 1.8・丸い端・文字と同じ色の飾り', (_name, Icon) => {

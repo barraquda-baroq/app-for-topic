@@ -1,5 +1,5 @@
 // 画面の小さな共通のフック。DS の src/ui/hooks.ts をそのまま写した物（DS は NS の物から、幅の区分を S・M・L にした。
-// docs/SPEC.md の 9.）
+// docs/SPEC.md の 9.）。段階2で、DS の useNow（今の時刻）を足した
 import { useEffect, useState } from 'react'
 import { msUntilNextDay, sameDay, todayYmd, type Ymd } from '../domain/dates'
 
@@ -79,4 +79,33 @@ export function useToday(): Ymd {
     }
   }, [])
   return today
+}
+
+/**
+ * 今の時刻（ミリ秒）。stepMs ごと（既定は 1分）の変わり目にそろえて描き直す（時計の 0時（UTC）から数えた変わり目。日本時間は
+ * UTC から 9時間ずれるだけなので、30分の変わり目は日本時間の 12:00・12:30・20:00・20:30 にも当たる）。画面が見えるようになった
+ * 時にも計算し直す（裏にある間はタイマーが遅れるため）。DS の useNow から（DS はデイリーの今の時刻の線）。TS はトップの状態の1行を、
+ * 枠の時刻と「まだ届いていません」の30分の境で変えるのに使う（docs/SPEC.md の 4.7。設計: 段階2の 1.1・1.7）
+ */
+export function useNow(stepMs = 60_000): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    let timer = 0
+    const tick = () => {
+      const t = Date.now()
+      setNow(t)
+      window.clearTimeout(timer)
+      timer = window.setTimeout(tick, stepMs - (t % stepMs))
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') tick()
+    }
+    timer = window.setTimeout(tick, stepMs - (Date.now() % stepMs))
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [stepMs])
+  return now
 }

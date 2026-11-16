@@ -1,17 +1,25 @@
-// 決まった値の言葉と決まった文の割り当て（docs/SPEC.md の 7.1 の「決まった値と決まった文」・5.5・5.7・16.3）。知らない値の扱いも表のとおり
+// 決まった値の言葉と決まった文の割り当て（docs/SPEC.md の 7.1 の「決まった値と決まった文」・5.5・5.7・16.3）。知らない値の扱いも表のとおり。
+// 段階2で足した日付の書き方（版の日付・版の名前・経緯の日付・出典の日時。曜日・月・年の境・知らない形は null。設計: 段階2の 1.20）
 import { describe, expect, it } from 'vitest'
 import {
   aiLabel,
   asOfText,
   conclusionLabelText,
+  editionDateText,
   editionFailedText,
+  editionLongDateText,
+  editionNameText,
   editionSlotText,
   FIXED_TEXTS,
   genreLabel,
+  PUBLISHED_UNKNOWN_TEXT,
+  publishedAtText,
   reasonKindLabel,
   regionLabel,
   slotLabel,
+  sourceDateText,
   stanceLabel,
+  timelineWhenText,
 } from './fixedTexts'
 import { GENRE_VALUES, REASON_KIND_VALUES } from './types'
 
@@ -86,5 +94,50 @@ describe('アプリが出す決まった文', () => {
     expect(asOfText('2027-01')).toBe('2027年1月時点')
     expect(asOfText(null)).toBeNull()
     expect(asOfText('2026-11-15')).toBeNull()
+  })
+})
+
+describe('日付の書き方（段階2の画面。設計: 段階2の 1.20）', () => {
+  it('版の日付の短い形「11/15（日）」・長い形「2026年11月15日（日）」（月と日は0で埋めない）', () => {
+    expect(editionDateText('2026-11-15')).toBe('11/15（日）')
+    expect(editionDateText('2026-11-05')).toBe('11/5（木）')
+    expect(editionLongDateText('2026-11-15')).toBe('2026年11月15日（日）')
+    expect(editionLongDateText('2027-01-03')).toBe('2027年1月3日（日）')
+  })
+
+  it('月・年の境', () => {
+    expect(editionDateText('2026-11-30')).toBe('11/30（月）')
+    expect(editionDateText('2026-12-01')).toBe('12/1（火）')
+    expect(editionLongDateText('2026-12-31')).toBe('2026年12月31日（木）')
+    expect(editionLongDateText('2027-01-01')).toBe('2027年1月1日（金）')
+  })
+
+  it('版の名前「11/15（日）12:00版」', () => {
+    expect(editionNameText('2026-11-15', '12')).toBe('11/15（日）12:00版')
+    expect(editionNameText('2026-11-14', '20')).toBe('11/14（土）20:00版')
+    expect(editionNameText('2026-11-14', '08')).toBeNull()
+    expect(editionNameText('2026-11-31', '12')).toBeNull()
+  })
+
+  it('経緯の when（年・年月・年月日。null・形の違う物は null）', () => {
+    expect(timelineWhenText('2026')).toBe('2026年')
+    expect(timelineWhenText('2023-04')).toBe('2023年4月')
+    expect(timelineWhenText('2026-11-15')).toBe('2026年11月15日')
+    expect(timelineWhenText('2026-01-05')).toBe('2026年1月5日')
+    for (const v of [null, '', '2026-13', '2026-02-30', '26-11', '2026/11']) expect([v, timelineWhenText(v)]).toEqual([v, null])
+  })
+
+  it('出典の日時（時差つきの日時は時刻まで・日付だけは日付・null は補足の文か「掲載日時は不明」）', () => {
+    expect(publishedAtText('2026-11-15T11:30+09:00')).toBe('2026年11月15日 11:30')
+    expect(publishedAtText('2026-11-15T09:05:42+09:00')).toBe('2026年11月15日 09:05')
+    expect(publishedAtText('2026-11-05')).toBe('2026年11月5日')
+    for (const v of [null, '2026-11-15T11:30Z', '2026-11-15T25:00+09:00', '2026-11-31', 'きのう'])
+      expect([v, publishedAtText(v)]).toEqual([v, null])
+    expect(sourceDateText({ publishedAt: '2026-11-15T11:30+09:00', publishedNote: 'ほか' })).toBe('2026年11月15日 11:30')
+    expect(sourceDateText({ publishedAt: null, publishedNote: '掲載日時は記事に書かれていない' })).toBe(
+      '掲載日時は記事に書かれていない',
+    )
+    expect(sourceDateText({ publishedAt: null, publishedNote: null })).toBe(PUBLISHED_UNKNOWN_TEXT)
+    expect(sourceDateText({ publishedAt: null })).toBe('掲載日時は不明')
   })
 })

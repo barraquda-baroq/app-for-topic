@@ -550,6 +550,43 @@ describe('開く分だけ読む（話題と訂正は版ごと・話題ごと。�
   })
 })
 
+describe('presentTopicIds（端末にある話題の id。鍵だけを読む。段階2の版の一覧の「受け取り中」）', () => {
+  it('渡した id のうち端末にある物だけを返し、話題の中身を読まない', async () => {
+    const p = fresh()
+    const a = topic('2026-11-15-12-aaaaaaa1')
+    const b = topic('2026-11-15-12-aaaaaaa2')
+    await p.applyRemote([a, b].map((r): Change => ({ table: 'topics', id: r.id, record: r })))
+    // 話題の中身を読む道（値のカーソル・まとめて読む・1件読む）を見張る。鍵だけの道（openKeyCursor・getAllKeys）は数えない
+    const reads: string[] = []
+    const watch = <T extends object>(proto: T, names: (keyof T & string)[]) =>
+      names.map((name) => {
+        const orig = proto[name] as unknown as (...args: unknown[]) => unknown
+        ;(proto as Record<string, unknown>)[name] = function (this: unknown, ...args: unknown[]) {
+          reads.push(name)
+          return orig.apply(this, args)
+        }
+        return () => ((proto as Record<string, unknown>)[name] = orig)
+      })
+    const restore = [
+      ...watch(IDBObjectStore.prototype, ['get', 'getAll', 'openCursor']),
+      ...watch(IDBIndex.prototype, ['get', 'getAll', 'openCursor']),
+    ]
+    try {
+      const got = await p.presentTopicIds([b.id, '2026-11-15-12-zzzzzzzz', a.id, a.id])
+      expect(got).toEqual(new Set([a.id, b.id]))
+      expect(reads).toEqual([])
+      // 見張りが効いている事（中身を読む getTopics は数える）
+      await p.getTopics([a.id])
+      expect(reads.length).toBeGreaterThan(0)
+    } finally {
+      for (const r of restore) r()
+    }
+    expect(await p.presentTopicIds([])).toEqual(new Set())
+    expect(await p.presentTopicIds(['2026-11-16-12-zzzzzzzz'])).toEqual(new Set())
+    p.close()
+  })
+})
+
 describe('送る（readOutbox・completeUpload・返事を受け取れなかった書き込み）', () => {
   it('readOutbox は limit 件まで。completeUpload は、送った後に変わっていなければ外し、変わっていれば送った内容を base にする', async () => {
     const p = fresh()

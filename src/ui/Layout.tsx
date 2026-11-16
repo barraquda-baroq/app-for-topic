@@ -1,6 +1,6 @@
 // アプリの外枠: ヘッダー、外観の反映、アプリの更新の帯、お知らせ（トースト）、ダイアログ。DS の src/ui/Layout.tsx から
-// （DS は NS の物から）。ヘッダー（docs/SPEC.md の 9.・14.5）: 左に TS のアイコンと名前、右に同期の表示（段階1。src/ui/SyncIndicator.tsx。
-// docs/SPEC.md の 7.8）と設定の歯車。DS の［MIM］は持ち込まない。版の表示は段階2で足す
+// （DS は NS の物から）。ヘッダー（docs/SPEC.md の 9.・14.5）: 左に TS のアイコンと名前と版の表示（段階2。src/ui/EditionLabel.tsx）、
+// 右に同期の表示（src/ui/SyncIndicator.tsx。docs/SPEC.md の 7.8）と設定の歯車。DS の［MIM］は持ち込まない
 import { useCallback, useEffect, useLayoutEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useLocation, useNavigate, useNavigationType } from 'react-router-dom'
@@ -8,6 +8,7 @@ import { paths } from '../routes'
 import { saveBeforeLeave } from '../store/lifecycle'
 import { notifyError, resolveAppearance, THEME_COLORS, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
 import { DialogHost, cancelAllDialogs } from './dialogs'
+import { EditionLabel } from './EditionLabel'
 import { GearIcon, XIcon } from './icons'
 import { SyncIndicator } from './SyncIndicator'
 import './layout.css'
@@ -27,8 +28,9 @@ export function useGoBack(): () => void {
 
 /**
  * 各画面のヘッダー（ログインの画面では出さない）。actions にほかのボタンを渡すと、設定の歯車の左に並ぶ。
- * 左のアイコンと名前を押すとトップへ。幅 380px 未満では名前を出さない（src/ui/layout.css）。同期の表示は右の歯車の並びの頭に出す
- * （同期を始めるまでは何も出さない）
+ * 左のアイコンと名前を押すとトップへ。その右に版の表示（出している版がある時だけ。押すと版の一覧）。S（600px 未満）では名前を出さず、
+ * アイコンと版の表示だけにする（src/ui/layout.css。開発。設計: 段階2の 1.2。docs/SPEC.md の 9.・14.5 の「380px 未満」を変えた）。
+ * 同期の表示は右の歯車の並びの頭に出す（同期を始めるまでは何も出さない）
  */
 export function AppHeader({ actions }: { actions?: ReactNode }) {
   return (
@@ -37,6 +39,7 @@ export function AppHeader({ actions }: { actions?: ReactNode }) {
         <img src="./icon.svg" alt="" width={26} height={26} />
         <span className="brand-name">Topic Studio</span>
       </Link>
+      <EditionLabel />
       <span className="spacer" />
       <SyncIndicator />
       {actions}
@@ -105,12 +108,18 @@ export function UpdateBanner() {
 }
 
 /**
- * 外観を <html> に反映する（docs/SPEC.md の 14.3）。
+ * 外観と記事の字の大きさを <html> に反映する（docs/SPEC.md の 14.3・9.）。
  * data-theme には実際の外観（white / dark / deep-dark）を入れる。「端末の設定に合わせる」の間は端末の切り替えにも追従する。
- * ブラウザの枠の色（<meta name="theme-color">）も外観に合わせる。最初の描画前は index.html のスクリプト（src/launch/launch.js）が同じことをする。
+ * ブラウザの枠の色（<meta name="theme-color">）も外観に合わせる。data-text-size には記事の字の大きさ（s / m / l）を入れる
+ * （src/styles.css の --read-size などを替える。段階2。NS の editorFontSize の作り）。
+ * 最初の描画前は index.html のスクリプト（src/launch/launch.js）が同じことをする。
  */
 export function PrefsEffect() {
   const appearance = usePrefs((s) => s.appearance)
+  const textSize = usePrefs((s) => s.textSize)
+  useEffect(() => {
+    document.documentElement.setAttribute('data-text-size', textSize)
+  }, [textSize])
   useEffect(() => {
     const root = document.documentElement
     const query = appearance === 'system' ? window.matchMedia?.('(prefers-color-scheme: dark)') : undefined

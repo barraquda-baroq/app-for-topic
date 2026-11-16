@@ -1,7 +1,18 @@
 // 暦の日付の計算（DS の src/domain/dates.test.ts から、段階0に写した物の分）: 月の日数（うるう年）・日を足す・次の 0時まで・
-// ログインの画面の日付・端末の時差で暦の日が飛んでもずれないこと
+// ログインの画面の日付・端末の時差で暦の日が飛んでもずれないこと。段階2で足した版の日付の日本語の曜日（weekdayJaOf）
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addDays, coverDateLabel, daysInMonth, msUntilNextDay, sameDay, todayYmd, weekdayOf, type Ymd } from './dates'
+import {
+  addDays,
+  coverDateLabel,
+  daysInMonth,
+  msUntilNextDay,
+  sameDay,
+  todayYmd,
+  weekdayJaOf,
+  weekdayOf,
+  WEEKDAYS_JA,
+  type Ymd,
+} from './dates'
 
 const d = (y: number, m: number, day: number): Ymd => ({ y, m, d: day })
 
@@ -55,5 +66,34 @@ describe('coverDateLabel（ログインの画面の日付）', () => {
   it('「SAT · 2026.11.14」の形', () => {
     expect(coverDateLabel(d(2026, 11, 14))).toBe('SAT · 2026.11.14')
     expect(coverDateLabel(d(2027, 1, 3))).toBe('SUN · 2027.01.03')
+  })
+})
+
+describe('weekdayJaOf（版の日付の日本語の曜日。docs/SPEC.md の 9.）', () => {
+  it('日曜始まりの1字', () => {
+    expect(WEEKDAYS_JA).toEqual(['日', '月', '火', '水', '木', '金', '土'])
+    expect(weekdayJaOf('2026-11-15')).toBe('日')
+    expect(weekdayJaOf('2026-11-14')).toBe('土')
+    expect(weekdayJaOf('2026-11-13')).toBe('金')
+  })
+
+  it('月・年の境とうるう年', () => {
+    expect(weekdayJaOf('2026-11-30')).toBe('月')
+    expect(weekdayJaOf('2026-12-01')).toBe('火')
+    expect(weekdayJaOf('2026-12-31')).toBe('木')
+    expect(weekdayJaOf('2027-01-01')).toBe('金')
+    expect(weekdayJaOf('2028-02-29')).toBe('火')
+  })
+
+  it('形の違う物・本当に無い日は null', () => {
+    for (const v of ['2026-02-30', '2027-02-29', '2026-13-01', '2026-11-5', '2026/11/15', '', null, 20261115])
+      expect([v, weekdayJaOf(v)]).toEqual([v, null])
+  })
+
+  it('端末の時差に左右されない', () => {
+    vi.stubEnv('TZ', 'Pacific/Kiritimati')
+    expect(weekdayJaOf('1994-12-31')).toBe('土')
+    vi.stubEnv('TZ', 'America/Los_Angeles')
+    expect(weekdayJaOf('2026-11-15')).toBe('日')
   })
 })

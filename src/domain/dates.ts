@@ -1,7 +1,9 @@
 // 暦の日付の計算。日付は端末の現地の暦の日付（壁時計の値。時差では動かさない）、日の変わり目は端末の 0時。
 // DS の src/domain/dates.ts から、段階0に要る分（ログインの画面の日付と、日付が変わった時の計算し直し）だけを写した物。
 // 曜日・日を足す計算は、DS の直し（日付変更線をまたいで暦の日が飛んだ時差でもずれないよう、その日の UTC の 0時で数える）を入れてある。
-// 段階1で、同期の表示の「無料枠を使い切った（{戻る時刻} ごろ）」の戻る時刻（DS の quotaResumeAt）を足した（docs/SPEC.md の 7.8）
+// 段階1で、同期の表示の「無料枠を使い切った（{戻る時刻} ごろ）」の戻る時刻（DS の quotaResumeAt）を足した（docs/SPEC.md の 7.8）。
+// 段階2で、版の日付（日本時間の 'YYYY-MM-DD'）の日本語の曜日（WEEKDAYS_JA・weekdayJaOf）を足した（ヘッダーの「11/15（日）12:00版」・
+// クリップの「2026年11月15日（日）」。docs/SPEC.md の 9.。DS の WEEKDAYS_JA と同じ並び）
 
 /** 暦の日付（端末の現地の日付。m は 1〜12） */
 export interface Ymd {
@@ -12,6 +14,9 @@ export interface Ymd {
 
 /** 曜日の英字3文字（日曜始まり） */
 export const WEEKDAYS_EN = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'] as const
+
+/** 曜日の日本語1字（日曜始まり。DS と同じ） */
+export const WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'] as const
 
 /** 2桁にそろえる（11.08 の 08 など） */
 export const pad2 = (n: number): string => String(n).padStart(2, '0')
@@ -52,6 +57,20 @@ export function weekdayOf(v: Ymd): number {
 
 export function addDays(v: Ymd, days: number): Ymd {
   return fromUtcDay(utcDay(v.y, v.m, v.d + days))
+}
+
+/**
+ * 'YYYY-MM-DD'（版の日付など、暦の日付の文字）の曜日の日本語1字。形の違う物・本当に無い日（2月30日など）は null（書かない）。
+ * 暦の計算なので、端末の時差に左右されない（weekdayOf と同じく UTC の暦で数える）。src/domain/jst.ts の isYmd はこのファイルを
+ * 読むので、ここでは読み込まずに同じ確かめをする（読み込みが輪にならないように）
+ */
+export function weekdayJaOf(date: unknown): string | null {
+  if (typeof date !== 'string') return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (!m) return null
+  const v: Ymd = { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) }
+  if (v.m < 1 || v.m > 12 || v.d < 1 || v.d > daysInMonth(v.y, v.m)) return null
+  return WEEKDAYS_JA[weekdayOf(v)]
 }
 
 /** 次の 0時（端末の現地の時刻）までのミリ秒。今日の計算し直しのタイマーに使う */

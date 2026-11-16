@@ -1,9 +1,9 @@
 // 小さな画面（DS の src/ui/Modal.test.tsx から、DS の予定の画面の印の確かめを外した物）: data-testid・クラス、Esc・背景・×で閉じる、
-// 開いた直後の Esc、フォーカスの戻り先、日本語の変換の Esc、Tab の囲い
+// 開いた直後の Esc、フォーカスの戻り先、日本語の変換の Esc、Tab の囲い。段階2で、開いているかを外から見る isModalOpen を足した
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useEffect, useLayoutEffect } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Modal } from './Modal'
+import { isModalOpen, Modal } from './Modal'
 
 afterEach(cleanup)
 
@@ -138,5 +138,34 @@ describe('Modal', () => {
       if (before) Object.defineProperty(HTMLElement.prototype, 'checkVisibility', before)
       else Reflect.deleteProperty(HTMLElement.prototype, 'checkVisibility')
     }
+  })
+
+  it('isModalOpen: 開いている間だけ true。2つ重ねて上だけ閉じても true、全部閉じると false（L のパネルの Esc の取り合い。設計: 段階2の 2.）', () => {
+    expect(isModalOpen()).toBe(false)
+    const view = (outer: boolean, inner: boolean) => (
+      <>
+        {outer ? (
+          <Modal title="下" onClose={() => {}} testId="outer">
+            中身
+          </Modal>
+        ) : null}
+        {inner ? (
+          <Modal title="上" onClose={() => {}} testId="inner">
+            中身
+          </Modal>
+        ) : null}
+      </>
+    )
+    const { rerender, unmount } = render(view(true, false))
+    expect(isModalOpen()).toBe(true)
+    rerender(view(true, true))
+    expect(isModalOpen()).toBe(true)
+    rerender(view(true, false))
+    expect(isModalOpen()).toBe(true)
+    rerender(view(false, false))
+    expect(isModalOpen()).toBe(false)
+    rerender(view(true, true))
+    unmount()
+    expect(isModalOpen()).toBe(false)
   })
 })

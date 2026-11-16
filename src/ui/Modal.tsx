@@ -29,6 +29,15 @@ export interface ModalProps {
 /** 開いているモーダルの重なり（いちばん上だけが Esc と Tab を扱う） */
 const stack: symbol[] = []
 
+/**
+ * 小さな画面（モーダル）が1つ以上開いているか。L の詳細のパネル（モーダルではない）が Esc を受ける時に、パネルの上に開いた
+ * クリップの窓などと取り合わないために使う（パネルの方が先に document に Esc を登録しているので、モーダルの stopPropagation では
+ * 止まらない。開いている間はパネルが Esc を扱わない。docs/SPEC.md の 9.。開発。設計: 段階2の 2.）
+ */
+export function isModalOpen(): boolean {
+  return stack.length > 0
+}
+
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 

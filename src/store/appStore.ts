@@ -17,6 +17,9 @@
 // 書いた時は BroadcastChannel（topic-studio-sync）で知らせ合い、端末の中を読み直す（DS と同じ）。
 // DS から写さなかった物: 復旧用の控え（localStorage）・ゴミ箱・受け取り箱の当て方・バックアップ・競合の控え（TS のアプリの記録は小さく、
 // 長い文章を書かないため。docs/SPEC.md の 16.5）
+// 段階2で、画面の読む口を足した（設計: 段階2の 1.8・1.9・1.16）: 1本の話題を id で読む loadTopicView（詳細・前の話題へのリンク・読み込み
+// 直した後）・続報のつながり threadOf・追いつく版 catchUpTargets と追いつきの話題 loadCatchUp・版の一覧の行 editionRows。どれも開く分
+// だけ読み（多くて5版・100本）、30日分の話題（約 12MB）を読まない（16.6 の 56。版の一覧の「受け取り中」は鍵だけ）
 import { create } from 'zustand'
 import {
   createPersistence,
@@ -30,10 +33,12 @@ import {
   type SaveOutcome,
   type UserRecords,
 } from '../db/persistence'
+import { catchUpItems, catchUpTargetIds, type CatchUpEdition } from '../domain/catchUp'
 import { correctionsByTopic, editionShowState } from '../domain/editionShow'
+import { latestFail, NOT_ARRIVED_AFTER_MIN } from '../domain/editionStatus'
 import { deepEqual } from '../domain/equal'
-import { parseEditionId, TOPIC_ID_RE } from '../domain/ids'
-import { isWithinRetention } from '../domain/jst'
+import { editionIdOf, editionIdOfRecordId, parseEditionId, TOPIC_ID_RE } from '../domain/ids'
+import { addDaysToDate, isWithinRetention, latestSlotAt, slotTimeMs } from '../domain/jst'
 import { isKnownTerm, pressKnownTerm, unpressKnownTerm, type KnownTermPress } from '../domain/known'
 import { RECORD_LIMITS } from '../domain/limits'
 import { DEFAULT_OUTLETS, type OutletDirectory } from '../domain/outlets'
@@ -51,7 +56,7 @@ import {
   type ShownReadMark,
   type ShownTopic,
 } from '../domain/repair'
-import { USER_TABLES, type KnownTerm, type ReadMark, type UserTableName } from '../domain/types'
+import { USER_TABLES, type KnownTerm, type ReadMark, type Slot, type UserTableName } from '../domain/types'
 import { checkKnownTerm, checkReadMark, type Problem } from '../domain/validate'
 import { mergeRemote } from '../sync/merge'
 
@@ -715,6 +720,211 @@ function scheduleViewRefresh(): Promise<void> {
 export function openEdition(editionId: string | null): Promise<void> {
   openTarget = editionId
   return scheduleViewRefresh()
+}
+
+// ---------- 段階2の画面の読む口（詳細・続報のつながり・追いつき・版の一覧。設計: 段階2の 1.8・1.9・1.16） ----------
+
+/**
+ * 話題を出してよい版（版の記録があり（版の記録 = 出してよいの印。docs/SPEC.md の 7.2）、30日の内で、order にその話題がある）。
+ * 無ければ null、版の記録が新しい形なら 'newer'
+ */
+function editionOfTopic(topicId: string, now: number): ShownEdition | 'newer' | null {
+  const editionId = TOPIC_ID_RE.test(topicId) ? editionIdOfRecordId(topicId) : null
+  if (!editionId) return null
+  const s = useApp.getState()
+  if (s.newerEditions.includes(editionId)) return 'newer'
+  const edition = s.editions.find((e) => e.id === editionId)
+  if (!edition || !isWithinRetention(edition.id.slice(0, 10), now) || !edition.order.includes(topicId)) return null
+  return edition
+}
+
+/** 1本の話題を読んだ結果（ready = 写しと、足された順の訂正。newer = 新しい形の記録。none = 出せない（端末に無い・30日の外など）） */
+export type TopicView =
+  | { kind: 'ready'; topic: ShownTopic; corrections: ShownCorrection[] }
+  | { kind: 'newer' }
+  | { kind: 'none' }
+
+/**
+ * 1本の話題を id で端末から読む（開いた版に無い話題の詳細: 追いつきの画面・前の話題へのリンク・読み込み直した後にほかの版の話題を
+ * 開いていた時。設計: 段階2の 1.9）。版の記録が無い・30日の外・版の order に無い・端末に無い話題は none。話題か版の記録が新しい形なら newer。
+ * 訂正はその話題に足された順
+ */
+export async function loadTopicView(topicId: string, opts: { now?: number } = {}): Promise<TopicView> {
+  const p = persistence
+  const edition = editionOfTopic(topicId, opts.now ?? Date.now())
+  if (!p || edition === null) return { kind: 'none' }
+  if (edition === 'newer') return { kind: 'newer' }
+  const [raw] = await p.getTopics([topicId])
+  if (!raw) return { kind: 'none' }
+  const r = repairTopic(raw, { outlets })
+  if (r.kind === 'newer') return { kind: 'newer' }
+  if (r.kind !== 'ok') return { kind: 'none' }
+  const corrections = (await p.correctionsOfTopic(topicId))
+    .map((c) => repairCorrection(c))
+    .flatMap((x) => (x.kind === 'ok' ? [x.value] : []))
+  return { kind: 'ready', topic: r.value, corrections: correctionsByTopic(corrections, [topicId]).get(topicId) ?? [] }
+}
+
+/** 続報のつながりの1本（前の話題へのリンク・「続報あり」に使う物だけ） */
+export interface ThreadTopic {
+  id: string
+  editionId: string
+  headline: string
+}
+
+/**
+ * 続報のつながり（同じ threadId）の、端末にあって出してよい話題（版の id の順 = 古い順。同じ版の中は order の順）。新しい形の記録・
+ * 版の記録の無い話題・30日の外の話題は入れない（docs/SPEC.md の 7.8 の「続報のつなぎ」）
+ */
+export async function threadOf(threadId: string, opts: { now?: number } = {}): Promise<ThreadTopic[]> {
+  const p = persistence
+  if (!p || !TOPIC_ID_RE.test(threadId)) return []
+  const now = opts.now ?? Date.now()
+  const out: (ThreadTopic & { position: number })[] = []
+  for (const raw of await p.topicsOfThread(threadId)) {
+    const edition = editionOfTopic(raw.id, now)
+    if (edition === null || edition === 'newer') continue
+    const r = repairTopic(raw, { outlets })
+    if (r.kind !== 'ok' || r.value.threadId !== threadId) continue
+    out.push({ id: r.value.id, editionId: edition.id, headline: r.value.headline, position: edition.order.indexOf(r.value.id) })
+  }
+  return out
+    .sort((a, b) => (a.editionId < b.editionId ? -1 : a.editionId > b.editionId ? 1 : a.position - b.position))
+    .map(({ id, editionId, headline }) => ({ id, editionId, headline }))
+}
+
+/** いくつかの続報のつながりをまとめて引く（前の版の話題の threadId。多くて 20回の索引の読み） */
+export async function threadsOf(
+  threadIds: Iterable<string>,
+  opts: { now?: number } = {},
+): Promise<Record<string, ThreadTopic[]>> {
+  const out: Record<string, ThreadTopic[]> = {}
+  for (const id of new Set(threadIds)) out[id] = await threadOf(id, opts)
+  return out
+}
+
+/** 出している版（いちばん新しい出せる版に付いていく時の、出している版。付いていかない・出せる版が無い時は null） */
+function followedView(state: Pick<AppState, 'opened'>): Extract<EditionView, { kind: 'ready' }> | null {
+  const { opened } = state
+  return opened.follow && opened.view?.kind === 'ready' ? opened.view : null
+}
+
+/**
+ * 追いつく版の id（新しい順。src/domain/catchUp.ts の catchUpTargetIds。設計: 段階2の 1.8）。出している版は、いちばん新しい出せる版に
+ * 付いていく時の版（前の版 #/e/{id} を開いている時・出せる版が無い時は []）。版の一覧と既読だけで決め、話題は読まない。
+ * 帯は length >= CATCH_UP_MIN の時
+ */
+export function catchUpTargets(state: Pick<AppState, 'editions' | 'user' | 'opened'>, now: number): string[] {
+  return catchUpTargetIds({
+    now,
+    editionIds: state.editions.map((e) => e.id),
+    seen: state.user.reads,
+    shownId: followedView(state)?.editionId ?? null,
+  })
+}
+
+/** 追いつきの1本（話題・その版・その話題の訂正） */
+export interface CatchUpEntry {
+  topic: ShownTopic
+  edition: ShownEdition
+  /** 足された順 */
+  corrections: ShownCorrection[]
+}
+
+/**
+ * 追いつきの話題を読む（版ごとに loadEditionView → src/domain/catchUp.ts の catchUpItems。読むのは多くて5版・100本）。出せない版
+ * （話題がそろわない・30日の外など）は飛ばす。いちばん新しい1本が今出している版にある続報は外す
+ */
+export async function loadCatchUp(ids: readonly string[], opts: { now?: number } = {}): Promise<CatchUpEntry[]> {
+  const now = opts.now ?? Date.now()
+  const current = followedView(useApp.getState())
+  const views = new Map<string, Extract<EditionView, { kind: 'ready' }>>()
+  for (const id of new Set(ids)) {
+    if (id === current?.editionId) continue
+    const view = await loadEditionView(id, { now })
+    if (view.kind === 'ready') views.set(id, view)
+  }
+  const editions: CatchUpEdition<ShownTopic>[] = [...views.values()].map((v) => ({
+    editionId: v.editionId,
+    order: v.edition.order,
+    topics: v.topics,
+  }))
+  return catchUpItems(editions, current).map((item) => {
+    const view = views.get(item.editionId)!
+    return { topic: item.topic, edition: view.edition, corrections: view.corrections[item.topic.id] ?? [] }
+  })
+}
+
+/**
+ * 版の一覧の1行（枠ごと。設計: 段階2の 1.8）: edition = 版の記録がある（receiving = 話題がまだ端末にそろわない）・newer = 新しい形の
+ * 版の記録・failed = 作れなかった印だけ（reason は短い理由の文。空なら null）・missing = 版も印も無い
+ */
+export type EditionRow = { date: string; slot: Slot } & (
+  | { kind: 'edition'; editionId: string; receiving: boolean }
+  | { kind: 'newer'; editionId: string }
+  | { kind: 'failed'; reasonKind: string; reason: string | null }
+  | { kind: 'missing' }
+)
+
+/** 次の枠（12:00 → その日の 20:00、20:00 → 次の日の 12:00） */
+function nextSlotOf(date: string, slot: Slot): { date: string; slot: Slot } {
+  return slot === '12' ? { date, slot: '20' } : { date: addDaysToDate(date, 1), slot: '12' }
+}
+
+/**
+ * 版の一覧の行（新しい順。設計: 段階2の 1.8）。出す枠は、30日の内で、いちばん古い「版の記録（新しい形を含む）か作れなかった印のある枠」から、
+ * 時刻の上でいちばん新しい枠まで（それより前の枠・この端末が受け取る前は出さない。記録が1つも無ければ []）。版も印も無い枠は missing。
+ * ただし、いちばん新しい枠の missing は、トップの状態の1行と同じく、枠の時刻の30分後から、同期が落ち着いている時だけ。
+ * 「受け取り中」は版の order の話題が端末にあるかを鍵だけで調べる（話題の中身は読まない。クラウドにも無いと分かった話題は欠けに数えない）
+ */
+export async function editionRows(now: number, syncSettled: boolean): Promise<EditionRow[]> {
+  const p = persistence
+  if (!p) return []
+  const s = useApp.getState()
+  const within = (id: string) => {
+    const parsed = parseEditionId(id)
+    return parsed !== null && isWithinRetention(parsed.date, now) ? parsed : null
+  }
+  const editions = new Map(s.editions.filter((e) => within(e.id)).map((e) => [e.id, e]))
+  const newer = new Set(s.newerEditions.filter((id) => within(id)))
+  const failed = new Set(s.editionFails.map((f) => f.editionId).filter((id) => within(id)))
+  const known = [...editions.keys(), ...newer, ...failed].sort()
+  if (!known.length) return []
+  const latest = latestSlotAt(now)
+  const latestId = editionIdOf(latest.date, latest.slot)
+  const last = known[known.length - 1] > latestId ? known[known.length - 1] : latestId
+  const present = await p.presentTopicIds([...editions.values()].flatMap((e) => e.order))
+  const rows: EditionRow[] = []
+  for (let at = within(known[0]); at; at = nextSlotOf(at.date, at.slot)) {
+    const id = editionIdOf(at.date, at.slot)
+    if (id > last) break
+    const slot = { date: at.date, slot: at.slot }
+    const edition = editions.get(id)
+    if (edition) {
+      const gone = goneTopics.get(id)
+      rows.push({
+        ...slot,
+        kind: 'edition',
+        editionId: id,
+        receiving: edition.order.some((t) => !present.has(t) && !gone?.has(t)),
+      })
+      continue
+    }
+    if (newer.has(id)) {
+      rows.push({ ...slot, kind: 'newer', editionId: id })
+      continue
+    }
+    const fail = latestFail(s.editionFails, id)
+    if (fail) {
+      rows.push({ ...slot, kind: 'failed', reasonKind: fail.reasonKind, reason: fail.reason || null })
+      continue
+    }
+    // 版も印も無い枠: いちばん新しい枠は30分たって同期が落ち着いてから。それより後の枠（端末の時計が遅れている時）は出さない
+    if (id > latestId) continue
+    if (id === latestId && !(syncSettled && now >= slotTimeMs(at.date, at.slot) + NOT_ARRIVED_AFTER_MIN * 60 * 1000)) continue
+    rows.push({ ...slot, kind: 'missing' })
+  }
+  return rows.reverse()
 }
 
 /** 端末の中の話題・訂正・版が変わった時に、開いている版を読み直すか */

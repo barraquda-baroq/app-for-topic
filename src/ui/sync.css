@@ -1,0 +1,55 @@
+/* ===== ヘッダーの同期の表示（src/ui/SyncIndicator.tsx。docs/SPEC.md の 7.8 の8つ・9.。■12 の A。設計: 段階2の 1.2） =====
+   段階1は src/ui/layout.css にあった TS の規則を移し、DS の形（雲のアイコン・M と L はアイコンと字・S はアイコンだけのボタン）にした。
+   DS の src/ui/sync.css は禁じた名前の --overdue を使う（var(--overdue, var(--danger))）ので写さず、止まっている時は --danger だけにした。
+   色は3段: そろっている＝--text-faint、送っている・未送信・受け取り中＝--text-muted、オフライン・無料枠・要更新・同期できない＝--danger
+   （止まっている時は斜線の雲にもして、色だけに頼らない）。幅の狭い画面で長い言葉が入っても、ヘッダーからはみ出さずに省く
+   （省いた全文は title と、S の小窓） */
+.sync-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: var(--tap);
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.sync-indicator .icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* M・L の字（狭い時は「…」で省く） */
+.sync-indicator-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sync-indicator.busy {
+  color: var(--text-muted);
+}
+
+.sync-indicator.warn {
+  color: var(--danger);
+}
+
+/* S のアイコンだけのボタン（押すと小窓。指で押せる 34px 四方） */
+.sync-indicator.is-button {
+  flex: none;
+  justify-content: center;
+  min-width: var(--tap);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--dur-hover);
+}
+
+.sync-indicator.is-button:hover {
+  background: var(--surface-3);
+}

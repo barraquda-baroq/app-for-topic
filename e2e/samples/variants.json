@@ -1,0 +1,292 @@
+{
+  "generatedBy": "scripts/sample-variants.mjs",
+  "note": "段階2の見本の案（docs/SPEC.md の 9.・10.・12.。設計: 段階2の 5.1）。手で直さず、node scripts/sample-variants.mjs で作り直す",
+  "themes": [
+    "white",
+    "dark",
+    "deep-dark"
+  ],
+  "questions": {
+    "1": {
+      "title": "強調の色",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "options": [
+        {
+          "letter": "A",
+          "id": "now",
+          "label": "今"
+        },
+        {
+          "letter": "B",
+          "id": "emphasis-brighter",
+          "label": "明るめ（ダーク・ディープダークだけ）"
+        },
+        {
+          "letter": "C",
+          "id": "emphasis-darker",
+          "label": "暗め"
+        }
+      ]
+    },
+    "2": {
+      "title": "本文の中の用語の印",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "options": [
+        {
+          "letter": "A",
+          "id": "now",
+          "label": "語の下に点線"
+        },
+        {
+          "letter": "B",
+          "id": "term-question",
+          "label": "語の後ろに小さな「？」"
+        },
+        {
+          "letter": "C",
+          "id": "term-none",
+          "label": "本文には付けない"
+        }
+      ]
+    },
+    "3": {
+      "title": "重大印の見た目",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "options": [
+        {
+          "letter": "A",
+          "id": "now",
+          "label": "「重大」の札＋カードの左の太い線"
+        },
+        {
+          "letter": "B",
+          "id": "major-badge",
+          "label": "「重大」の札だけ"
+        },
+        {
+          "letter": "C",
+          "id": "major-bigger",
+          "label": "札に加えて見出しを少し大きく"
+        }
+      ]
+    },
+    "4": {
+      "title": "訂正の出し方",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "options": [
+        {
+          "letter": "A",
+          "id": "now",
+          "label": "カードに「訂正あり」を出す"
+        },
+        {
+          "letter": "B",
+          "id": "correction-plain",
+          "label": "A に加えて、訂正のある話題は強調を外す"
+        },
+        {
+          "letter": "C",
+          "id": "correction-detail-only",
+          "label": "カードには出さない（詳細の上だけ）"
+        }
+      ]
+    },
+    "12": {
+      "title": "ヘッダーの同期の表示",
+      "appearances": [
+        "white"
+      ],
+      "options": [
+        {
+          "letter": "A",
+          "id": "now",
+          "label": "雲のアイコンと字（スマホはアイコンと小窓）"
+        },
+        {
+          "letter": "B",
+          "id": "sync-text",
+          "label": "字だけ（スマホは短い字）"
+        }
+      ]
+    }
+  },
+  "options": {
+    "emphasis-brighter": {
+      "question": 1,
+      "letter": "B",
+      "label": "明るめ（ダーク・ディープダークだけ）",
+      "appearances": [
+        "dark",
+        "deep-dark"
+      ],
+      "tokens": {
+        "dark": {
+          "--emphasis": "#f4ad6e"
+        },
+        "deep-dark": {
+          "--emphasis": "#d08a50"
+        }
+      },
+      "css": ":root[data-theme='dark'] {\n  --emphasis: #f4ad6e;\n}\n:root[data-theme='deep-dark'] {\n  --emphasis: #d08a50;\n}\n",
+      "notes": [
+        "ダーク #f4ad6e（5つの地でいちばん低い比 7.86:1・明るさ 0.802）",
+        "ディープダーク #d08a50（5つの地でいちばん低い比 6.16:1・明るさ 0.693）"
+      ]
+    },
+    "emphasis-darker": {
+      "question": 1,
+      "letter": "C",
+      "label": "暗め",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "tokens": {
+        "white": {
+          "--emphasis": "#8f4c00"
+        },
+        "dark": {
+          "--emphasis": "#e0975a"
+        },
+        "deep-dark": {
+          "--emphasis": "#b8773f"
+        }
+      },
+      "css": ":root[data-theme='white'] {\n  --emphasis: #8f4c00;\n}\n:root[data-theme='dark'] {\n  --emphasis: #e0975a;\n}\n:root[data-theme='deep-dark'] {\n  --emphasis: #b8773f;\n}\n",
+      "notes": [
+        "ホワイト #8f4c00（5つの地でいちばん低い比 5.34:1・明るさ 0.488）",
+        "ダーク #e0975a（5つの地でいちばん低い比 6.22:1・明るさ 0.737）",
+        "ディープダーク #b8773f（5つの地でいちばん低い比 4.76:1・明るさ 0.627）"
+      ]
+    },
+    "term-question": {
+      "question": 2,
+      "letter": "B",
+      "label": "語の後ろに小さな「？」",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "tokens": {},
+      "css": "[data-testid='term-mark'] {\n  text-decoration: none !important;\n}\n[data-testid='term-mark']::after {\n  content: '？';\n  margin-left: 1px;\n  font-size: 0.72em;\n  font-weight: 700;\n  line-height: 0;\n  vertical-align: super;\n  color: var(--text-muted);\n}\n",
+      "notes": [
+        "形の案（色は今のまま）"
+      ]
+    },
+    "term-none": {
+      "question": 2,
+      "letter": "C",
+      "label": "本文には付けない",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "tokens": {},
+      "css": "[data-testid='term-mark'] {\n  text-decoration: none !important;\n  cursor: text !important;\n}\n[data-testid='term-note'] {\n  display: none !important;\n}\n",
+      "notes": [
+        "形の案（色は今のまま）"
+      ]
+    },
+    "major-badge": {
+      "question": 3,
+      "letter": "B",
+      "label": "「重大」の札だけ",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "tokens": {},
+      "css": "[data-testid='top-card'][data-major='true'] {\n  border-left: 0 !important;\n  padding-left: 0 !important;\n}\n",
+      "notes": [
+        "形の案（色は今のまま）"
+      ]
+    },
+    "major-bigger": {
+      "question": 3,
+      "letter": "C",
+      "label": "札に加えて見出しを少し大きく",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "tokens": {},
+      "css": "[data-testid='top-card'][data-major='true'] {\n  border-left: 0 !important;\n  padding-left: 0 !important;\n}\n[data-testid='top-card'][data-major='true'] h3 {\n  font-size: calc(var(--read-head) + 3px) !important;\n}\n[data-testid='topic-detail']:has(.topic-major) h3 {\n  font-size: calc(var(--read-title) + 3px) !important;\n}\n",
+      "notes": [
+        "形の案（色は今のまま）"
+      ]
+    },
+    "correction-plain": {
+      "question": 4,
+      "letter": "B",
+      "label": "A に加えて、訂正のある話題は強調を外す",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "tokens": {},
+      "css": "[data-testid='top-card'][data-correction='true'] .emph,\n[data-testid='topic-detail']:has([data-testid='topic-correction']) .emph {\n  color: inherit !important;\n  font-weight: inherit !important;\n}\n",
+      "notes": [
+        "形の案（色は今のまま）"
+      ]
+    },
+    "correction-detail-only": {
+      "question": 4,
+      "letter": "C",
+      "label": "カードには出さない（詳細の上だけ）",
+      "appearances": [
+        "white",
+        "dark",
+        "deep-dark"
+      ],
+      "tokens": {},
+      "css": ".top-card-corrected {\n  display: none !important;\n}\n",
+      "notes": [
+        "形の案（色は今のまま）"
+      ]
+    },
+    "sync-text": {
+      "question": 12,
+      "letter": "B",
+      "label": "字だけ（スマホは短い字）",
+      "appearances": [
+        "white"
+      ],
+      "tokens": {},
+      "css": "[data-testid='sync-indicator'] svg {\n  display: none !important;\n}\n[data-testid='sync-indicator'][data-sample-short] {\n  flex: 0 1 auto !important;\n  min-width: 0 !important;\n  padding: 0 4px !important;\n  font-size: 12px !important;\n}\n[data-testid='sync-indicator'][data-sample-short]::after {\n  content: attr(data-sample-short);\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n",
+      "notes": [
+        "形の案（色は今のまま）"
+      ]
+    }
+  },
+  "asked": {
+    "questions": [],
+    "tokens": {
+      "white": {},
+      "dark": {},
+      "deep-dark": {}
+    },
+    "css": ""
+  }
+}

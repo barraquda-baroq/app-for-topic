@@ -7,7 +7,8 @@
 // 増やさずに、最初の描画の前に動く。埋め込むので import は使えない。iPhone（Safari 16）でも動くよう var と function だけで書く。
 //
 // - 外観: 設定（localStorage の topic-studio:prefs）から ホワイト／ダーク／ディープダーク を決め、<html data-theme> と
-//   ブラウザの枠の色にする。起動後は src/ui/Layout.tsx の PrefsEffect が同じ規則で反映する
+//   ブラウザの枠の色にする。記事の字の大きさ（小・中・大。段階2）も <html data-text-size> に入れる（字の大きさが一瞬跳ばないように）。
+//   起動後は src/ui/Layout.tsx の PrefsEffect が同じ規則で反映する
 // - 起動アニメーション: 画面いっぱいの重なり（<html> の直下。<body> はまだ無い）を置き、地の色だけをその場で出す。絵は HTML を
 //   読み終えた後、ふだんは Worker（OffscreenCanvas。別のスレッド）が canvas に描く（アプリの起動と取り合わない）。Worker を使えない
 //   時はページの中で描く（下ごしらえは最初の描画の時。下ごしらえ・1コマが重い端末では、アプリの起動を遅らせないよう動きをやめて
@@ -96,6 +97,18 @@
     document.documentElement.setAttribute('data-theme', appearance)
     var meta = document.querySelector('meta[name="theme-color"]')
     if (meta) meta.setAttribute('content', THEME_COLORS[appearance])
+  }
+
+  /** 記事の字の大きさ（src/store/uiStore.ts の TEXT_SIZES と同じ。変える時は両方そろえる） */
+  var TEXT_SIZES = { s: true, m: true, l: true }
+
+  /**
+   * 設定の記事の字の大きさ（prefs.textSize）。無い・分からない値は中（src/store/uiStore.ts の migratePrefs と同じ。docs/SPEC.md の 9.。
+   * 設計: 段階2の 1.1）
+   */
+  function resolveTextSize(prefs) {
+    var size = prefs && typeof prefs.textSize === 'string' ? prefs.textSize : 'm'
+    return Object.prototype.hasOwnProperty.call(TEXT_SIZES, size) ? size : 'm'
   }
 
   // ================================================================ 出すかどうか
@@ -1649,7 +1662,7 @@
     controller.start()
   }
 
-  /** 外観を決め、起動アニメーションを出す（index.html から一度だけ呼ぶ）。戻り値は外観 */
+  /** 外観と記事の字の大きさを決め、起動アニメーションを出す（index.html から一度だけ呼ぶ）。戻り値は外観 */
   function boot() {
     var appearance = 'white'
     var local = storageOf('localStorage')
@@ -1659,6 +1672,11 @@
       applyAppearance(appearance)
     } catch (e) {
       /* 外観はアプリ（PrefsEffect）があとで反映する */
+    }
+    try {
+      document.documentElement.setAttribute('data-text-size', resolveTextSize(prefs))
+    } catch (e) {
+      /* 字の大きさもアプリ（PrefsEffect）があとで反映する */
     }
     try {
       if (!current) launch(prefs, appearance, local, storageOf('sessionStorage'))
@@ -1680,6 +1698,7 @@
     },
     // 以下は単体テスト（src/launch/launch.test.ts）と確かめ用
     resolveAppearance: resolveAppearance,
+    resolveTextSize: resolveTextSize,
     animationTheme: animationTheme,
     decide: decide,
     createController: createController,

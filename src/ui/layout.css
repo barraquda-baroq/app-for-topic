@@ -1,34 +1,39 @@
-/* ===== ヘッダーの中身（docs/SPEC.md の 14.5。DS の src/ui/layout.css から、［MIM］のボタンを外した物） =====
+/* ===== ヘッダーの中身（docs/SPEC.md の 9.・14.5。DS の src/ui/layout.css から、［MIM］のボタンを外した物） =====
    ヘッダーの枠（.app-header: 高さ 52px＋ノッチの分・上に固定・--surface を 92% にしてぼかす・下に 1px の --rule）と
-   アイコン（26px・角丸 6px・--brand-filter）は src/styles.css。ここは名前 */
+   アイコン（26px・角丸 6px・--brand-filter）は src/styles.css。ここは名前と版の表示。同期の表示は src/ui/sync.css */
 
-/* 幅 380px 未満ではアプリの名前を出さず、アイコンだけ */
-@media (max-width: 379px) {
+/* S（600px 未満）ではアプリの名前を出さず、アイコンと版の表示だけにする（開発。設計: 段階2の 1.2。390px で「アイコン＋名前＋版の表示＋
+   同期＋歯車」が約 366px になり、使える幅 358px に入らないため。版の表示の方が役に立つ。docs/SPEC.md の 9.・14.5 の「380px 未満」を変えた） */
+@media (max-width: 599px) {
   .app-header .brand-name {
     display: none;
   }
 }
 
-/* ===== ヘッダーの同期の表示（docs/SPEC.md の 7.8 の8つ。src/ui/SyncIndicator.tsx。DS の src/ui/sync.css から、アイコンを外した物） =====
-   小さな字だけで控えめに出す。色は3段: そろっている＝--text-faint、送っている・未送信・受け取り中＝--text-muted、
-   オフライン・無料枠・要更新・同期できない＝--danger（DS の --overdue の代わり。TS は --overdue を持ち込まない）。
-   幅の狭い画面で長い言葉が入っても、ヘッダーからはみ出さずに省く */
-.sync-indicator {
-  display: block;
-  min-width: 0;
-  padding: 0 4px;
-  overflow: hidden;
-  font-size: 12px;
-  line-height: 34px;
-  color: var(--text-faint);
+/* ===== ヘッダーの版の表示（src/ui/EditionLabel.tsx。「11/15（日）12:00版 ▾」。押すと版の一覧。docs/SPEC.md の 9.） =====
+   名前の右に置き、縮めない（省くのは同期の表示の字の方）。字はヘッダーの物で、記事の字の大きさでは変えない（設計: 段階2の 1.18）。
+   数字の幅をそろえ、版が替わっても横に揺れないようにする */
+.edition-label {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--tap);
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  text-decoration: none;
   white-space: nowrap;
-  text-overflow: ellipsis;
+  transition: background var(--dur-hover);
 }
 
-.sync-indicator.busy {
+.edition-label:hover {
+  background: var(--surface-3);
+}
+
+.edition-label .icon {
   color: var(--text-muted);
-}
-
-.sync-indicator.warn {
-  color: var(--danger);
 }

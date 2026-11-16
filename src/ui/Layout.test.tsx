@@ -1,6 +1,7 @@
 // アプリの外枠（AppFrame）の新しい版の帯（docs/SPEC.md の 14.6。DS の src/ui/Layout.test.tsx から）: 新しい版を受け取った時だけ「アプリの新しい版があります ［更新する］」を出し、
-// 押すと入力中の下書きを保存してから新しい版に切り替える（保存は帯の1か所だけ。src/main.tsx の apply は切り替えるだけ）
-import { cleanup, render, screen } from '@testing-library/react'
+// 押すと入力中の下書きを保存してから新しい版に切り替える（保存は帯の1か所だけ。src/main.tsx の apply は切り替えるだけ）。
+// 段階2で、記事の字の大きさを <html data-text-size> に入れること（PrefsEffect）を足した（外観の分は src/features/appSettings/DisplaySettings.test.tsx）
+import { act, cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,7 +13,7 @@ vi.mock('../store/lifecycle', async (importOriginal) => {
   return { ...actual, saveBeforeLeave: () => (h.saveFails ? Promise.resolve(false) : actual.saveBeforeLeave()) }
 })
 import { markDraftClean, markDraftDirty } from '../store/draftRegistry'
-import { useAppUpdate, useToasts } from '../store/uiStore'
+import { DEFAULT_PREFS, useAppUpdate, usePrefs, useToasts } from '../store/uiStore'
 import { AppFrame } from './Layout'
 
 function renderFrame() {
@@ -93,5 +94,22 @@ describe('新しい版の帯', () => {
     useAppUpdate.setState({ ready: true, apply: null })
     renderFrame()
     expect(screen.queryByTestId('update-banner')).toBeNull()
+  })
+})
+
+describe('記事の字の大きさ（PrefsEffect。docs/SPEC.md の 9.。設計: 段階2の 1.1）', () => {
+  afterEach(() => {
+    usePrefs.setState({ textSize: DEFAULT_PREFS.textSize })
+    document.documentElement.removeAttribute('data-text-size')
+  })
+
+  it('設定の字の大きさを <html data-text-size> に入れ、変えると替える（既定は中）', () => {
+    document.documentElement.removeAttribute('data-text-size')
+    renderFrame()
+    expect(document.documentElement.getAttribute('data-text-size')).toBe('m')
+    act(() => usePrefs.setState({ textSize: 'l' }))
+    expect(document.documentElement.getAttribute('data-text-size')).toBe('l')
+    act(() => usePrefs.setState({ textSize: 's' }))
+    expect(document.documentElement.getAttribute('data-text-size')).toBe('s')
   })
 })

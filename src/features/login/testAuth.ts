@@ -5,13 +5,14 @@
 // 段階1で、作り物の版を端末（Dexie）に入れる道を足した（Firebase 無しで、版のある画面を確かめる。段階2の画面の見本にも使う。
 // docs/SPEC.md の 16.3 の「開発サーバー」）: topic-studio:test-editions も置くと、ログインした状態にした後に作り物の版を入れる
 // （値は '1' か、makeFakeMonth の作り方の JSON。例 '{"days":3,"seed":"fake-month"}'）。window.__ts.fakeSignIn({ editions: true }) も同じ。
-// 作り物の版（src/test/fixtures/fakeEditions.ts）は使う時にだけ読み込むので、公開するビルドには入らない
+// 作り物の版（src/test/fixtures/fakeEditions.ts）は使う時にだけ読み込むので、公開するビルドには入らない。
+// 段階2で、見本と E2E の場面を作る作り方（extras・withholdNewest・onlyNewest）を足した（既定は今のまま。設計: 段階2の 5.3）
 import type { AnyRecord, Change } from '../../db/persistence'
 import { latestSlotAt } from '../../domain/jst'
 import type { Slot } from '../../domain/types'
 import { applyRemoteChanges, openEdition, setTopicOutlets, useApp } from '../../store/appStore'
 import { fakeSignInForTest, initSync, useSync } from '../../sync/controller'
-import type { FakeMonthScenes } from '../../test/fixtures/fakeEditions'
+import type { FakeMonthExtra, FakeMonthScenes } from '../../test/fixtures/fakeEditions'
 
 export const TEST_AUTH_KEY = 'topic-studio:test-auth'
 /** 作り物の版を入れる印（TEST_AUTH_KEY と一緒に置いた時だけ効く） */
@@ -38,9 +39,18 @@ export interface TestEditionsOptions {
   until?: string
   /** until の日の最後の枠（until だけ渡した時は '20'） */
   untilSlot?: Slot
+  /** 足す場面（makeFakeMonth の extras。correctsEmphasis・failsNext・newerTopic・newerEdition。省くと何も足さない） */
+  extras?: FakeMonthExtra[]
+  /**
+   * いちばん新しい版の話題のうち、order の後ろから n本を端末に入れない（版の話題がそろうのを待っている場面。版の記録は入れる。
+   * 20 なら話題を1本も入れない）
+   */
+  withholdNewest?: number
+  /** いちばん新しい版の記録と話題だけを入れる（ほかの版・作れなかった印・訂正を入れない。出せる版が1つも無い場面に） */
+  onlyNewest?: boolean
 }
 
-/** 作り物の版を入れた結果（入れた数・いちばん新しい版・場面の id） */
+/** 作り物の版を入れた結果（端末に入れた数・いちばん新しい版・場面の id） */
 export interface TestEditionsResult {
   editions: number
   topics: number
@@ -108,19 +118,29 @@ export async function putFakeEditions(opts: TestEditionsOptions = {}): Promise<T
     untilSlot: opts.untilSlot ?? (opts.until ? '20' : latest.slot),
     days: opts.days ?? 3,
     seed: opts.seed,
+    extras: opts.extras,
   })
+  const newest = month.editions[month.editions.length - 1].edition
+  // 入れない話題（いちばん新しい版の order の後ろから n本）
+  const n = typeof opts.withholdNewest === 'number' && Number.isFinite(opts.withholdNewest) ? Math.floor(opts.withholdNewest) : 0
+  const withheld = new Set(n > 0 ? newest.order.slice(-Math.min(n, newest.order.length)) : [])
+  const inNewest = (r: { table: string; record: { id: string } }) =>
+    r.table === 'editions' ? r.record.id === newest.id : r.table === 'topics' && r.record.id.startsWith(`${newest.id}-`)
   setTopicOutlets(FAKE_OUTLETS)
-  const changes: Change[] = fakeRecordsOf(month)
+  const records = fakeRecordsOf(month)
     .filter((r) => r.table !== 'termPacks')
-    .map((r) => ({ table: r.table, id: r.record.id, record: r.record as unknown as AnyRecord }))
+    .filter((r) => !opts.onlyNewest || inNewest(r))
+    .filter((r) => !(r.table === 'topics' && withheld.has(r.record.id)))
+  const changes: Change[] = records.map((r) => ({ table: r.table, id: r.record.id, record: r.record as unknown as AnyRecord }))
   await applyRemoteChanges(changes)
   await openEdition(null)
+  const count = (table: string) => records.filter((r) => r.table === table).length
   return {
-    editions: month.editions.length,
-    topics: month.editions.reduce((n, e) => n + e.topics.length, 0),
-    editionFails: month.editionFails.length,
-    corrections: month.corrections.length,
-    newestEditionId: month.editions[month.editions.length - 1].edition.id,
+    editions: count('editions'),
+    topics: count('topics'),
+    editionFails: count('editionFails'),
+    corrections: count('corrections'),
+    newestEditionId: newest.id,
     scenes: month.scenes,
   }
 }

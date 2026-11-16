@@ -13,6 +13,7 @@
     "test:e2e": "playwright test",
     "test:e2e:sync": "firebase emulators:exec --config firebase.emu.json --only auth,firestore --project demo-topic-studio \"playwright test -c playwright.sync.config.ts\"",
     "e2e:tags": "node e2e/check-tags.mjs",
+    "samples": "E2E_SAMPLES=1 playwright test --project=samples && node scripts/sample-sheet.mjs",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\"",
     "seed:emu": "node scripts/seed-emulator.mjs",

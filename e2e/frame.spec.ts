@@ -66,7 +66,7 @@ test.describe('ログインの画面', { tag: ['@pc', '@s'] }, () => {
 })
 
 test.describe('空のトップ画面', { tag: ['@pc', '@s'] }, () => {
-  test('テスト用の印でログインした状態になり、ヘッダーの左にアイコンと名前、右端に設定の歯車。下に「まだ版はありません」', async ({
+  test('テスト用の印でログインした状態になり、ヘッダーの左にアイコン（600px からは名前も）、右端に設定の歯車。下に「まだ版はありません」', async ({
     page,
   }) => {
     await openSignedIn(page)
@@ -75,7 +75,10 @@ test.describe('空のトップ画面', { tag: ['@pc', '@s'] }, () => {
     await expect(brand).toBeVisible()
     await expect(brand.locator('img')).toHaveAttribute('src', './icon.svg')
     expect(await brand.locator('img').evaluate((e) => e.getBoundingClientRect().width)).toBe(26)
+    // 名前の字は S（600px 未満。@s）でも持つ（隠すだけ。設計: 段階2の 1.2）
     await expect(header.locator('.brand-name')).toHaveText('Topic Studio')
+    if ((page.viewportSize()?.width ?? 0) >= 600) await expect(header.locator('.brand-name')).toBeVisible()
+    else await expect(header.locator('.brand-name')).toBeHidden()
     const gear = await header.getByTestId('open-settings').boundingBox()
     const brandBox = await brand.boundingBox()
     const headerBox = await header.boundingBox()
@@ -175,14 +178,19 @@ test.describe('新しい版の帯', { tag: ['@pc', '@s'] }, () => {
 })
 
 test.describe('狭い幅（S）', { tag: ['@pc', '@s'] }, () => {
-  test('幅 360px でも横にはみ出さない。ヘッダーはアイコンだけ（380px 未満は名前を出さない）', async ({ page }) => {
+  // 段階2で、名前を隠す幅を 380px 未満から S（600px 未満）にした（ヘッダーに版の表示を入れるため。設計: 段階2の 1.2）
+  test('幅 360px でも横にはみ出さない。S（600px 未満）のヘッダーは名前を出さずアイコンだけ（600px から名前を出す）', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 360, height: 740 })
     await openSignedIn(page)
     await noHorizontalScroll(page)
     await expect(page.locator('.brand-name')).toBeHidden()
     await expect(page.getByTestId('brand').locator('img')).toBeVisible()
     await tapSize(page.getByTestId('open-settings'), '設定の歯車')
-    await page.setViewportSize({ width: 380, height: 740 })
+    await page.setViewportSize({ width: 599, height: 740 })
+    await expect(page.locator('.brand-name')).toBeHidden()
+    await page.setViewportSize({ width: 600, height: 740 })
     await expect(page.locator('.brand-name')).toBeVisible()
   })
 })

@@ -1,7 +1,9 @@
 // 設定の画面（#/settings。別のページ。docs/SPEC.md の 14.5）。DS の段階0の src/features/appSettings/AppSettingsPage.tsx から。
 // 上に［‹ 戻る］。段階0の区切りは「表示」（外観4つ・起動アニメーション。src/features/appSettings/DisplaySettings.tsx）、
 // 「アカウント」（ログインしているアカウントと［ログアウト］）、「ホーム画面に追加」（src/features/login/InstallHelp.tsx を枠付きで）、
-// 「このアプリについて」（版と、同梱する書体のライセンス）。同期の状態・文字の大きさ・Claude との連携などは後の段階で足す
+// 「このアプリについて」（版と、同梱する書体のライセンス）。
+// 段階2で、「表示」に記事の字の大きさを、その下に「『知ってる』にした語」（src/features/appSettings/KnownTermsSettings.tsx）を足した
+// （docs/SPEC.md の 9.・5.8。設計: 段階2の 1.23）。同期の区切りと［今すぐ同期］は作らない（■12 の C）。Claude との連携は段階3
 import { useId } from 'react'
 import { APP_VERSION } from '../../sync/appVersion'
 import { signOut, useSync } from '../../sync/controller'
@@ -9,6 +11,7 @@ import { useDocumentTitle } from '../../ui/hooks'
 import { AppHeader, useGoBack } from '../../ui/Layout'
 import { InstallHelp } from '../login/InstallHelp'
 import { DisplaySettings } from './DisplaySettings'
+import { KnownTermsSettings } from './KnownTermsSettings'
 
 /** 同梱する書体のライセンスの表示（SIL Open Font License 1.1。全文は public/licenses/RobotoMono-OFL.txt） */
 export const FONT_NOTICE = 'Roboto Mono — Copyright 2015 The Roboto Mono Project Authors（SIL Open Font License 1.1）'
@@ -93,6 +96,7 @@ export function AppSettingsPage() {
         </div>
         <h1 className="visually-hidden">設定</h1>
         <DisplaySettings />
+        <KnownTermsSettings />
         <AccountSection />
         <InstallHelp />
         <AboutSection />

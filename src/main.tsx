@@ -11,11 +11,12 @@ import './styles.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
-import { App } from './App'
+import { App, appRouter } from './App'
 import { fakeSignInWithEditions, putFakeEditions, type TestEditionsOptions } from './features/login/testAuth'
+import type { PanelSide } from './features/topic/sheets'
 import { afterNextPaint, notifyAppReady } from './launch/launchHook'
 import { initStore, setTopicOutlets } from './store/appStore'
-import { knowTerm, markReadTopic } from './store/devActions'
+import { knowTerm, markReadTopic, markSeenEdition, openTopicSheet } from './store/devActions'
 import { installLeaveHandlers } from './store/lifecycle'
 import { useAppUpdate } from './store/uiStore'
 import { fakeSignInForTest, initSync, signInForTest, useSync, whenAuthKnown } from './sync/controller'
@@ -56,6 +57,13 @@ if (import.meta.env.DEV) {
     markRead: (topicId: string) => markReadTopic(topicId),
     /** 段階1の「知ってる」（画面の操作は段階2）: 開いている版の話題の用語から、語を「知ってる」にする（ストアの know の結果を返す） */
     know: (termId: string) => knowTerm(termId),
+    /** 段階2の見た版（追いつきの見本・E2E）: 版の一覧を見たにする（ストアの markSeen の結果を返す） */
+    markSeen: (editionId: string) => markSeenEdition(editionId),
+    /**
+     * 段階2の詳細（詳細の E2E がトップのカードを待たずに開く）: 今の行き先のまま履歴の state に詳細の印を積む（side は L で重ねる列。
+     * 渡さなければ null。src/features/topic/sheets.ts の sheetState。開けたら true）
+     */
+    openTopic: (topicId: string, side?: PanelSide | null) => openTopicSheet(appRouter(), topicId, side ?? null),
     /** ログインしているアカウント（持ち主の関所のテスト用） */
     syncUid: () => useSync.getState().user?.uid ?? null,
     /** 画面のテスト用: 新しい版を受け取った時の帯（本物の UpdateBanner）を出す。［更新する］を押すと updateApplied() が true になる */

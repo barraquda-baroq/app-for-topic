@@ -1,6 +1,7 @@
 // CI のビルドの確かめ（.github/workflows/ci.yml の「ビルドにテスト用の入口と作り物の版が無いことの確かめ」。docs/SPEC.md の 16.3・14.7）が、
 // アプリのコードが読む作り物（src/test/fixtures の物）を見逃さないか。公開するビルドに漏れた時は、分けた部品のファイル
-// （{ファイルの名前}-{指紋}.js）ができ、中に作り物の社の名前などが残る（関数の名前は縮めると消える）
+// （{ファイルの名前}-{指紋}.js）ができ、中に作り物の社の名前などが残る（関数の名前は縮めると消える）。段階2で、開発用フックの鍵 markSeen を
+// 足した（openTopic は本物の部品の名前でもあるので、式に入れない）
 import { describe, expect, it } from 'vitest'
 import { FAKE_VIA } from './fixtures/fakeEditions'
 import { FAKE_OUTLET_NAMES } from './fixtures/fakeOutlets'
@@ -45,8 +46,13 @@ describe('CI のビルドの確かめ（ci.yml の grep）', () => {
     for (const name of [...FAKE_OUTLET_NAMES, FAKE_VIA]) expect([name, grep.test(`"${name}"`)]).toEqual([name, true])
   })
 
-  it('ふつうのコードの言葉には当たらない（example.com は firebase の部品にもある）', () => {
-    for (const s of ['https://example.com/', 'outlets', 'setTopicOutlets', 'unknown'])
+  it('開発用フックの鍵（既読・見た版・知ってる・入口）で当たる（段階2で markSeen を足した）', () => {
+    for (const s of ['__ts', 'markRead:', 'markSeen:', '{know:', ',know:', 'fakeSignIn', 'putFakeEditions'])
+      expect([s, grep.test(s)]).toEqual([s, true])
+  })
+
+  it('ふつうのコードの言葉には当たらない（example.com は firebase の部品にもある。openTopic は詳細を開く本物の部品の名前）', () => {
+    for (const s of ['https://example.com/', 'outlets', 'setTopicOutlets', 'unknown', 'openTopic', 'onPressKnown'])
       expect([s, grep.test(s)]).toEqual([s, false])
   })
 })

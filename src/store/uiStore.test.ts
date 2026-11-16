@@ -1,16 +1,44 @@
-// 端末ごとの表示の設定（docs/SPEC.md の 7.5・14.3）とお知らせ。DS の src/store/uiStore.test.ts から（DS だけの設定の分を外した）
+// 端末ごとの表示の設定（docs/SPEC.md の 7.5・14.3）とお知らせ。DS の src/store/uiStore.test.ts から（DS だけの設定の分を外した）。
+// 段階2で、記事の字の大きさ（textSize）と、端末に覚えないトップの画面の状態（useTopUi）の確かめを足した
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_PREFS, migratePrefs, PREFS_KEY, PREFS_VERSION, resolveAppearance, THEME_COLORS } from './uiStore'
+import {
+  DEFAULT_PREFS,
+  foldKey,
+  migratePrefs,
+  PREFS_KEY,
+  PREFS_VERSION,
+  resetTopUiForTests,
+  resolveAppearance,
+  THEME_COLORS,
+  useTopUi,
+} from './uiStore'
 
 describe('表示の設定の読み直し（migratePrefs）', () => {
-  it('初めは「端末の設定に合わせる」・起動アニメーションはオン。保存先は topic-studio:prefs', () => {
-    expect(DEFAULT_PREFS).toEqual({ appearance: 'system', launchAnimation: true })
+  it('初めは「端末の設定に合わせる」・起動アニメーションはオン・記事の字は中。保存先は topic-studio:prefs', () => {
+    expect(DEFAULT_PREFS).toEqual({ appearance: 'system', launchAnimation: true, textSize: 'm' })
     expect(PREFS_KEY).toBe('topic-studio:prefs')
   })
 
   it('保存した設定はそのまま読む（保存形式の版 v は設定の値に含めない。DS だけの項目は読まない）', () => {
-    const prefs = migratePrefs({ v: PREFS_VERSION, appearance: 'deep-dark', launchAnimation: false, lastMode: 'week' })
-    expect(prefs).toEqual({ appearance: 'deep-dark', launchAnimation: false })
+    const prefs = migratePrefs({
+      v: PREFS_VERSION,
+      appearance: 'deep-dark',
+      launchAnimation: false,
+      textSize: 'l',
+      lastMode: 'week',
+    })
+    expect(prefs).toEqual({ appearance: 'deep-dark', launchAnimation: false, textSize: 'l' })
+  })
+
+  it('記事の字の大きさは小・中・大のどれか。無い（段階1までの設定）・知らない値は中にする。保存形式の版は上げない（1 のまま）', () => {
+    for (const t of ['s', 'm', 'l'] as const) expect(migratePrefs({ textSize: t }).textSize).toBe(t)
+    expect(migratePrefs({ v: 1, appearance: 'dark', launchAnimation: false })).toEqual({
+      appearance: 'dark',
+      launchAnimation: false,
+      textSize: 'm',
+    })
+    for (const bad of ['xl', 'M', 16, null, true]) expect(migratePrefs({ textSize: bad }).textSize).toBe('m')
+    expect(PREFS_VERSION).toBe(1)
   })
 
   it('外観は4つのどれか。NS の項目名（theme）・NS 1.x の light は読まない', () => {
@@ -20,7 +48,7 @@ describe('表示の設定の読み直し（migratePrefs）', () => {
   })
 
   it('知らない値・型の違う値・壊れたデータは既定値にする', () => {
-    expect(migratePrefs({ appearance: 'sepia', launchAnimation: 'off', extra: 1 })).toEqual(DEFAULT_PREFS)
+    expect(migratePrefs({ appearance: 'sepia', launchAnimation: 'off', textSize: 'huge', extra: 1 })).toEqual(DEFAULT_PREFS)
     expect(migratePrefs(null)).toEqual(DEFAULT_PREFS)
     expect(migratePrefs('dark')).toEqual(DEFAULT_PREFS)
     expect(migratePrefs([1, 2])).toEqual(DEFAULT_PREFS)
@@ -60,12 +88,22 @@ describe('起動時の読み込みと保存', () => {
 
     usePrefs.getState().setPrefs({ appearance: 'deep-dark', launchAnimation: false })
     const stored = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Record<string, unknown>
-    expect(stored).toEqual({ v: PREFS_VERSION, appearance: 'deep-dark', launchAnimation: false })
+    expect(stored).toEqual({ v: PREFS_VERSION, appearance: 'deep-dark', launchAnimation: false, textSize: 'm' })
+
+    // 記事の字の大きさも書く（起動アニメーションの launch.js も読む）
+    usePrefs.getState().setPrefs({ textSize: 's' })
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}')).toEqual({
+      v: PREFS_VERSION,
+      appearance: 'deep-dark',
+      launchAnimation: false,
+      textSize: 's',
+    })
 
     vi.resetModules()
     const again = await import('./uiStore')
     expect(again.usePrefs.getState().appearance).toBe('deep-dark')
     expect(again.usePrefs.getState().launchAnimation).toBe(false)
+    expect(again.usePrefs.getState().textSize).toBe('s')
   })
 
   it('保存内容が壊れていても既定値で起動する', async () => {
@@ -74,6 +112,47 @@ describe('起動時の読み込みと保存', () => {
     const { usePrefs } = await import('./uiStore')
     expect(usePrefs.getState().appearance).toBe('system')
     expect(usePrefs.getState().launchAnimation).toBe(true)
+  })
+})
+
+describe('トップの画面の状態（useTopUi。端末に覚えない）', () => {
+  afterEach(() => {
+    resetTopUiForTests()
+    localStorage.clear()
+    vi.resetModules()
+  })
+
+  it('「既読 n件」は版と区切りごとに開け閉めし、初めは全部畳んでいる', () => {
+    expect(useTopUi.getState().openFolds).toEqual({})
+    useTopUi.getState().setFoldOpen('2026-11-15-12', 'all', true)
+    useTopUi.getState().setFoldOpen('2026-11-15-12', 'politics', true)
+    useTopUi.getState().setFoldOpen('2026-11-14-20', 'all', true)
+    expect(Object.keys(useTopUi.getState().openFolds).sort()).toEqual(
+      [foldKey('2026-11-14-20', 'all'), foldKey('2026-11-15-12', 'all'), foldKey('2026-11-15-12', 'politics')].sort(),
+    )
+    useTopUi.getState().setFoldOpen('2026-11-15-12', 'all', false)
+    expect(useTopUi.getState().openFolds[foldKey('2026-11-15-12', 'all')]).toBeUndefined()
+    expect(useTopUi.getState().openFolds[foldKey('2026-11-15-12', 'politics')]).toBe(true)
+    // 版の id と区切りの組で分ける（区切りの名前が版の id に混ざらない）
+    expect(foldKey('2026-11-15-12', 'all')).not.toBe(foldKey('2026-11-15-1', '2all'))
+  })
+
+  it('版ごとの位置（ページ・列ごとのスクロールと今の区切り）を覚える', () => {
+    useTopUi.getState().setPlace('2026-11-15-12', { scroll: { page: 840 }, section: 'economy' })
+    useTopUi.getState().setPlace('2026-11-14-20', { scroll: { jp: 120, world: 0 }, section: null })
+    expect(useTopUi.getState().places['2026-11-15-12']).toEqual({ scroll: { page: 840 }, section: 'economy' })
+    expect(useTopUi.getState().places['2026-11-14-20']).toEqual({ scroll: { jp: 120, world: 0 }, section: null })
+  })
+
+  it('localStorage に書かず、アプリを開き直すと畳んで先頭から始まる', async () => {
+    localStorage.clear()
+    useTopUi.getState().setFoldOpen('2026-11-15-12', 'all', true)
+    useTopUi.getState().setPlace('2026-11-15-12', { scroll: { page: 840 }, section: 'economy' })
+    expect(localStorage.length).toBe(0)
+    vi.resetModules()
+    const again = await import('./uiStore')
+    expect(again.useTopUi.getState().openFolds).toEqual({})
+    expect(again.useTopUi.getState().places).toEqual({})
   })
 })
 

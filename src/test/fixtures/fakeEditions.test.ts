@@ -1,6 +1,8 @@
 // 作り物の版（docs/SPEC.md の 16.3 の「作り物の版」）を確かめる: 場面が全部ある・id がコネクタと同じ作り方・同じ種からは同じ物・
 // 中身が作り物だけ（URL は https://example.com/…、社は作り物の一覧、読んだ所は「××ニュース」）・上限の内（コネクタの確かめで断る物が、
-// 断る物を入れた1本と後の版の記録の見本のほかに無い）。作り物の版は、テスト・エミュレーターに入れる道具・段階2の画面の見本で使う
+// 断る物を入れた1本と後の版の記録の見本のほかに無い）。作り物の版は、テスト・エミュレーターに入れる道具・段階2の画面の見本で使う。
+// 段階2で足した extras（設計: 段階2の 5.3・4.1）: 既定の出力（id・数）は今と同じ・correctsEmphasis の訂正の対象が強調した語句・どれも送る
+// 直前の確かめを通る（newerTopic・newerEdition で v: 2 にした記録は、v の誤りだけで断られる）
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { checkEmphasis, emphasisFieldText, firstOccurrence, splitEmphasis } from '../../domain/emphasis'
 import { deepEqual, stableStringify } from '../../domain/equal'
@@ -23,6 +25,9 @@ import {
 } from '../../domain/validate'
 import {
   CHAIN_CORRECTION_TEXT,
+  CLOSURE_CORRECTION_TEXT,
+  CLOSURE_EMPHASIS,
+  FAKE_MONTH_EXTRAS,
   FAKE_TOPIC_SCENES,
   FAKE_URL_PREFIX,
   FAKE_VIA,
@@ -567,5 +572,99 @@ describe('fakeRecordsOf（コネクタが足す順）', () => {
     }
     for (const r of fakeRecordsOf(ed))
       if (!rejectedIds(ed).has(r.record.id)) expect(checkRecord(r.table, r.record, opts).errors).toEqual([])
+  })
+})
+
+describe('makeFakeMonth の extras（段階2の見本と E2E の場面。設計: 段階2の 5.3）', () => {
+  const BASE = { until: '2026-11-15', untilSlot: '12', days: 7, seed: 'samples' } as const
+  const plain = makeFakeMonth(BASE)
+  const all = makeFakeMonth({ ...BASE, extras: [...FAKE_MONTH_EXTRAS] })
+  const recordsById = (m: FakeMonth) => new Map(fakeRecordsOf(m).map((r) => [r.record.id, r]))
+
+  it('既定は何も足さない（extras を省いた時・空の時は今と同じ物。場面にも extras が無い）', () => {
+    expect(deepEqual(makeFakeMonth({ ...BASE, extras: [] }), plain)).toBe(true)
+    expect(plain.scenes.extras).toBeUndefined()
+    expect(deepEqual(makeFakeMonth(MONTH_OPTS), month)).toBe(true)
+    expect(() => makeFakeMonth({ ...BASE, extras: ['nope' as never] })).toThrow(RangeError)
+  })
+
+  it('足しても、既定の記録の id・数・中身は同じ（v を替えた2つの記録のほか）', () => {
+    const a = recordsById(plain)
+    const b = recordsById(all)
+    const changed = new Set([all.scenes.extras?.newerTopic, all.scenes.extras?.newerEdition])
+    for (const [id, r] of a) {
+      expect(b.has(id)).toBe(true)
+      if (!changed.has(id)) expect([id, deepEqual(b.get(id), r)]).toEqual([id, true])
+    }
+    const added = [...b.keys()].filter((id) => !a.has(id))
+    expect(added.sort()).toEqual([all.scenes.extras?.correctsEmphasis?.correctionId, all.editionFails.at(-1)?.id].sort())
+    expect(all.scenes.chain).toEqual(plain.scenes.chain)
+    expect(all.scenes.corrections).toEqual(plain.scenes.corrections)
+  })
+
+  it('correctsEmphasis: 続報の鎖の3本目の要約の強調した語句そのものを正す訂正（版の 60分後）', () => {
+    const m = makeFakeMonth({ ...BASE, extras: ['correctsEmphasis'] })
+    const x = m.scenes.extras?.correctsEmphasis
+    expect(x?.topicId).toBe(m.scenes.chain[2])
+    const c = m.corrections.find((r) => r.id === x?.correctionId)!
+    expect(c.text).toBe(CLOSURE_CORRECTION_TEXT)
+    const third = m.editions.find((e) => e.edition.id === c.editionId)!
+    const topic = third.topics.find((t) => t.id === c.topicId)!
+    expect(topic.emphasis.summary).toContain(CLOSURE_EMPHASIS)
+    expect(firstOccurrence(topic.summary, CLOSURE_EMPHASIS)).not.toBeNull()
+    // 訂正の文は、強調した語句（来週の土曜に1日通行止め）の中身を正す
+    for (const w of ['通行止め', '来週の土曜', '1日']) expect(c.text).toContain(w)
+    expect(c.createdAt).toBe(third.edition.createdAt + 60 * 60 * 1000)
+    expect(c.id).toBe(correctionIdOf(c))
+    expect(checkCorrection(c, { existingForTopic: 0 })).toEqual({ errors: [], warnings: [] })
+    expect(m.corrections.map((r) => r.createdAt)).toEqual([...m.corrections.map((r) => r.createdAt)].sort((a, b) => a - b))
+    expect(m.corrections).toHaveLength(plain.corrections.length + 1)
+  })
+
+  it('failsNext: untilSlot の次の枠に作れなかった印だけ（版は作らない）', () => {
+    const m = makeFakeMonth({ ...BASE, extras: ['failsNext'] })
+    expect(m.scenes.extras?.failsNext).toBe('2026-11-15-20')
+    const f = m.editionFails.find((x) => x.editionId === '2026-11-15-20')!
+    expect(f).toMatchObject({
+      reasonKind: 'quota',
+      createdAt: jstStartOfDayMs('2026-11-15') + 20 * 60 * 60 * 1000 - 2 * 60 * 1000,
+    })
+    expect(f.id).toBe(editionFailIdOf(f))
+    expect(checkEditionFail(f)).toEqual({ errors: [], warnings: [] })
+    expect(m.editions.map((e) => e.edition.id)).not.toContain('2026-11-15-20')
+    expect(m.editionFails).toHaveLength(2)
+    // until の日を 20:00版で終える時は、次の日の 12:00
+    const late = makeFakeMonth({ until: '2026-11-15', days: 3, extras: ['failsNext'] })
+    expect(late.scenes.extras?.failsNext).toBe('2026-11-16-12')
+  })
+
+  it('newerTopic・newerEdition: いちばん新しい版の20位の話題・版の記録を v: 2 に（id は同じ。v の誤りだけで断られる）', () => {
+    const m = makeFakeMonth({ ...BASE, extras: ['newerTopic', 'newerEdition'] })
+    const newest = m.editions.at(-1)!
+    const before = plain.editions.at(-1)!
+    expect(m.scenes.extras?.newerTopic).toBe(before.topics[19].id)
+    expect(newest.topics[19]).toEqual({ ...before.topics[19], v: 2 })
+    expect(m.scenes.extras?.newerEdition).toBe(before.edition.id)
+    expect(newest.edition).toEqual({ ...before.edition, v: 2 })
+    const vErrors = (now: { path: string; code: string }[], was: { path: string; code: string }[]) =>
+      now.filter((e) => !was.some((w) => w.path === e.path && w.code === e.code))
+    expect(vErrors(checkTopic(newest.topics[19], opts).errors, checkTopic(before.topics[19], opts).errors)).toEqual([
+      expect.objectContaining({ path: 'v', code: 'value' }),
+    ])
+    expect(checkEdition(newest.edition).errors).toEqual([expect.objectContaining({ path: 'v', code: 'value' })])
+  })
+
+  it('全部を足しても、v を替えた記録と断る物の見本のほかは、送る直前の確かめを通る', () => {
+    const changed = new Set([all.scenes.extras?.newerTopic, all.scenes.extras?.newerEdition])
+    for (const e of all.editions)
+      for (const r of fakeRecordsOf(e))
+        if (!changed.has(r.record.id) && !rejectedIds(e).has(r.record.id))
+          expect([r.record.id, checkRecord(r.table, r.record, opts).errors]).toEqual([r.record.id, []])
+    for (const f of all.editionFails) expect(checkEditionFail(f).errors).toEqual([])
+    const perTopic = new Map<string, number>()
+    for (const c of all.corrections) {
+      expect(checkCorrection(c, { existingForTopic: perTopic.get(c.topicId) ?? 0 }).errors).toEqual([])
+      perTopic.set(c.topicId, (perTopic.get(c.topicId) ?? 0) + 1)
+    }
   })
 })

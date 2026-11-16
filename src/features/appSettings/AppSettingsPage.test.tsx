@@ -1,5 +1,6 @@
 // 設定の画面（docs/SPEC.md の 14.5。DS の src/features/appSettings/AppSettingsPage.test.tsx から）: 「表示」「アカウント」
-// 「ホーム画面に追加」「このアプリについて」を出す。［‹ 戻る］の行き来と、ログアウトでログインの画面へ戻ること
+// 「ホーム画面に追加」「このアプリについて」を出す。［‹ 戻る］の行き来と、ログアウトでログインの画面へ戻ること。
+// 段階2で、「表示」の下に「『知ってる』にした語」を足した（設計: 段階2の 1.23）。同期の区切りは作らない（■12 の C）
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
@@ -36,13 +37,21 @@ afterEach(() => {
 })
 
 describe('AppSettingsPage', () => {
-  it('「表示」「アカウント」「ホーム画面に追加」「このアプリについて」をこの順に出す', async () => {
+  it('「表示」「『知ってる』にした語」「アカウント」「ホーム画面に追加」「このアプリについて」をこの順に出す（同期の区切りは無い）', async () => {
     renderAt('/settings')
     const page = await screen.findByTestId('app-settings')
     const titles = within(page)
       .getAllByRole('heading', { level: 2 })
       .map((h) => h.textContent)
-    expect(titles).toEqual(['表示', 'アカウント', 'ホーム画面に追加（アプリとして使う）', 'このアプリについて'])
+    expect(titles).toEqual([
+      '表示',
+      '「知ってる」にした語',
+      'アカウント',
+      'ホーム画面に追加（アプリとして使う）',
+      'このアプリについて',
+    ])
+    expect(within(page).getByTestId('text-size')).toBeTruthy()
+    expect(within(page).getByTestId('known-terms')).toBeTruthy()
     expect(screen.getByTestId('account-email').textContent).toBe('me@example.com')
     expect(screen.getByTestId('app-header')).toBeTruthy()
     expect(document.title).toBe('設定 — Topic Studio')

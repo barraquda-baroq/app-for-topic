@@ -1,4 +1,5 @@
-// E2E のテストに、流す端末の印があるかの確かめ（npm run e2e:tags。CI でも流す。docs/SPEC.md の 14.7。DS の e2e/check-tags.mjs をそのまま写した）。
+// E2E のテストに、流す端末の印があるかの確かめ（npm run e2e:tags。CI でも流す。docs/SPEC.md の 14.7。DS の e2e/check-tags.mjs をそのまま写した。
+// 段階2で、DS と同じく見本の画面の端末（E2E_SAMPLES）を並べないようにした）。
 // playwright.config.ts は端末の印（@pc・@s・@m・@ios）でテストを絞るので、印の無いテストはどこでも流れない（黙って抜ける）。
 // それを止めるため、印で絞らずに（E2E_LIST_ALL=1）全部のテストを並べ（ブラウザも開発サーバーも使わない）、印の無い物があれば落とす。
 // 知らない印（打ち間違いかもしれない物）と、iPhone（WebKit）で流す数（CI の WebKit の不安定のため、段階0の起動アニメーション・
@@ -52,6 +53,8 @@ function main() {
   const require = createRequire(import.meta.url)
   const cli = require.resolve('@playwright/test/cli')
   const env = { ...process.env, E2E_LIST_ALL: '1' }
+  // 見本の画面（e2e/samples/。E2E_SAMPLES=1 の時だけの samples の端末）は、端末の印で流す物ではないので並べない
+  delete env.E2E_SAMPLES
   const run = spawnSync(process.execPath, [cli, 'test', '--list', '--reporter=json', '--project=desktop'], {
     env,
     encoding: 'utf8',

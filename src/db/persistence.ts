@@ -8,7 +8,8 @@
 // - アプリの記録は消さない（削除の印を書かない）。30日を過ぎた行は期限の専用の関数 expireBefore で、データの行と同じ鍵の送信待ちの行を
 //   一緒に消す（送信待ちに積まない。DS の delLocal は使わない）
 // - 受け取った位置（_meta の cursor）は置き場（records・private）ごとに、反映と同じトランザクションで書く
-// - 話題と訂正は開く分だけ読む（版ごと・話題ごと）。アプリの記録と版の一覧は全部を読める（docs/SPEC.md の 7.8 の「画面の状態の持ち方」）
+// - 話題と訂正は開く分だけ読む（版ごと・話題ごと）。アプリの記録と版の一覧は全部を読める（docs/SPEC.md の 7.8 の「画面の状態の持ち方」）。
+//   段階2で、話題が端末にあるかを鍵だけで調べる presentTopicIds を足した（版の一覧の「受け取り中」。設計: 段階2の 1.8）
 // - DS の受け取り箱のまとまり（g）・復元（force・replaceAll）・ゴミ箱の控え・_gone・_pack・親子の片付け・dropMissing は写さない
 //   （TS には削除の印も受け取り箱も無い。docs/SPEC.md の 16.5）
 //
@@ -271,6 +272,11 @@ export interface Persistence {
   topicsOfThread(threadId: string): Promise<AnyRecord[]>
   /** 話題を id で読む（ids と同じ並びで、端末に無ければ null。版の order の話題がそろったかを見る） */
   getTopics(ids: readonly string[]): Promise<(AnyRecord | null)[]>
+  /**
+   * ids のうち、端末にある話題の id（主キーだけを読み、話題の中身は読まない。版の一覧の「受け取り中」を、30日分の話題（約 12MB）を
+   * 読まずに決める。docs/SPEC.md の 16.6 の 56。設計: 段階2の 1.8）
+   */
+  presentTopicIds(ids: readonly string[]): Promise<Set<string>>
   /** その話題の訂正 */
   correctionsOfTopic(topicId: string): Promise<AnyRecord[]>
   /** その版の話題の訂正（開いている版の訂正をまとめて読む） */
@@ -507,6 +513,17 @@ export function createPersistence(dbName = DEFAULT_DB_NAME, options: Persistence
     async getTopics(ids) {
       if (!ids.length) return []
       return (await db.tableOf('topics').bulkGet([...ids])).map((r) => r ?? null)
+    },
+
+    async presentTopicIds(ids) {
+      if (!ids.length) return new Set()
+      return new Set(
+        await db
+          .tableOf('topics')
+          .where(':id')
+          .anyOf([...ids])
+          .primaryKeys(),
+      )
     },
 
     async save(prev, next) {

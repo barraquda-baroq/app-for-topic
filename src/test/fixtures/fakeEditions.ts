@@ -3,6 +3,8 @@
 // - makeFakeEdition({ date, slot, seed }): 1つの枠の版と、その20本の話題と、辞書の束（その版で足した語。辞書がまだ空なので、使った語の全部）
 // - makeFakeMonth({ until, days }): 何日分かの版。続報の鎖・作れなかった枠・時期で変わる語・訂正を含める（訂正も返す）
 // - fakeRecordsOf: 記録を、コネクタが足す順（辞書の束 → 話題 → 版。作った時刻の順）に並べる（エミュレーターに入れる道具・偽のクラウド用）
+// - makeFakeMonth の extras（段階2の画面の見本と E2E の場面。設計: 段階2の 5.3）: 強調した語句そのものを正す訂正・いちばん新しい枠の
+//   作れなかった印・新しい形の話題・新しい形の版。既定は何も足さない（今のテスト・エミュレーターに入れる道具・同期の E2E の id と数を変えない）
 // 返すのは記録（docs/SPEC.md の 7.1〜7.3 の型）。外側の文書（RecordDoc）は src/sync/codec.ts で作る（ここでは作らない）。
 // id は src/domain/ids.ts で、段階3のコネクタと同じ作り方で作る（話題は中身の指紋、版は枠、訂正は話題の id と文の指紋）。
 // 乱数は種から作り、Math.random・Date.now を使わない（同じ種からは同じ物。テストと段階2の画面の見本で同じ作り物を使うため）。
@@ -1748,6 +1750,33 @@ export interface FakeMonthOptions {
   seed?: string
   /** until の日の最後の枠（省くと '20'。'12' なら until の 20:00版を作らない） */
   untilSlot?: Slot
+  /** 足す場面（段階2の見本と E2E。FAKE_MONTH_EXTRAS。省くと何も足さない） */
+  extras?: readonly FakeMonthExtra[]
+}
+
+/**
+ * makeFakeMonth に足せる場面（設計: 段階2の 5.3）。どれも既定の記録の id・数・中身を変えず、足すか、いちばん新しい版の記録の形の版を
+ * 替えるだけ（ほかの話題・版・訂正の id は同じ）:
+ * - correctsEmphasis: 続報の鎖の3本目の要約の強調「来週の土曜に1日通行止め」そのものを正す訂正を足す（版の 60分後。docs/SPEC.md の 12. の
+ *   「強調した語句そのものが訂正の対象」の場面。既定の訂正は、どれも強調の無い語句を正す）
+ * - failsNext: untilSlot の次の枠（いちばん新しい枠）に、作れなかった印（使用量の上限）だけを足す（その枠には版を作らない）
+ * - newerTopic: いちばん新しい版の20位の話題の記録を v: 2 にする（id は変えない。「新しい形の記録」の場面）
+ * - newerEdition: いちばん新しい版の記録を v: 2 にする（話題はそのまま。いちばん新しい枠が新しい形の記録の場面）
+ * newerTopic・newerEdition の記録は、送る直前の確かめ（checkTopic・checkEdition）の「v は 1」で断られる（アプリより新しいコネクタの記録の見本）
+ */
+export const FAKE_MONTH_EXTRAS = ['correctsEmphasis', 'failsNext', 'newerTopic', 'newerEdition'] as const
+export type FakeMonthExtra = (typeof FAKE_MONTH_EXTRAS)[number]
+
+/** 足した場面の id（extras を渡した物だけ） */
+export interface FakeMonthExtraScenes {
+  /** correctsEmphasis: 足した訂正の id と、正した話題（続報の鎖の3本目）の id */
+  correctsEmphasis?: { correctionId: string; topicId: string }
+  /** failsNext: 作れなかった印だけを足した枠の版の id */
+  failsNext?: string
+  /** newerTopic: v: 2 にした話題の id */
+  newerTopic?: string
+  /** newerEdition: v: 2 にした版の id */
+  newerEdition?: string
 }
 
 export interface FakeMonthScenes {
@@ -1766,6 +1795,8 @@ export interface FakeMonthScenes {
   }
   /** 時期で変わる語（「与党（日本）」）。changedIn の版から rev 2 になり、asOf が上がる */
   changingTerm: { key: string; termId: string; asOfBefore: string; asOfAfter: string; changedIn: string }
+  /** 足した場面（extras を渡した時だけある） */
+  extras?: FakeMonthExtraScenes
 }
 
 export interface FakeMonth {
@@ -1780,6 +1811,11 @@ export interface FakeMonth {
 
 /** 続報の鎖の1本目の訂正の文（docs/SPEC.md の 7.1 の「訂正」・16.3 の例） */
 export const CHAIN_CORRECTION_TEXT = '新しい橋の歩道の幅は 2メートルではなく 3メートルでした'
+
+/** extras の correctsEmphasis: 続報の鎖の3本目の要約の強調した語句（CLOSURE_EMPHASIS）そのものを正す訂正の文（設計: 段階2の 5.3） */
+export const CLOSURE_CORRECTION_TEXT = '通行止めは来週の土曜の1日ではなく、土曜と日曜の2日でした'
+/** 続報の鎖の3本目の要約の強調（CLOSURE_CORRECTION_TEXT が正す語句） */
+export const CLOSURE_EMPHASIS = '来週の土曜に1日通行止め'
 
 /** 続報の鎖の話題の、前の話題（2本目・3本目） */
 interface ChainLink {
@@ -1932,7 +1968,7 @@ const bridgeClosure =
     ],
     unverified: [],
     emphasis: {
-      summary: ['来週の土曜に1日通行止め', '悪い所が見つかったわけではない'],
+      summary: [CLOSURE_EMPHASIS, '悪い所が見つかったわけではない'],
       'soWhat.life': ['古い橋へ迂回する'],
       'timeline.2.text': ['通行止めを市が発表'],
       'followUp.whatsNew': ['1日の通行止め'],
@@ -1943,6 +1979,9 @@ const bridgeClosure =
 /** 何日分かの作り物の版（古い順） */
 export function makeFakeMonth(opts: FakeMonthOptions): FakeMonth {
   const { until, days, seed = 'fake-month', untilSlot = '20' } = opts
+  const extras = new Set<FakeMonthExtra>(opts.extras ?? [])
+  for (const x of extras)
+    if (!(FAKE_MONTH_EXTRAS as readonly string[]).includes(x)) throw new RangeError(`知らない extras です（${String(x)}）`)
   if (!isYmd(until)) throw new RangeError(`until は 'YYYY-MM-DD' にしてください（${until}）`)
   if (!Number.isInteger(days) || days < 3) throw new RangeError(`days は3以上の整数にしてください（${days}）`)
   const slots: { date: string; slot: Slot }[] = []
@@ -2054,23 +2093,68 @@ export function makeFakeMonth(opts: FakeMonthOptions): FakeMonth {
       secondAt,
       correctionRun(secondAt),
     ),
-  ].sort((a, b) => a.createdAt - b.createdAt)
+  ]
   const changedIn = editionIdOf(slots[changeIndex].date, slots[changeIndex].slot)
+  // 足す場面（設計: 段階2の 5.3）。既定の記録を作り終えた後に足す（乱数の並びを変えず、既定の記録の id・中身を変えない）
+  const extraScenes: FakeMonthExtraScenes = {}
+  if (extras.has('correctsEmphasis')) {
+    const third = editionAt(chainAt[2])
+    const closure = third.topics[CHAIN_RANK - 1]
+    const at = third.edition.createdAt + 60 * MINUTE_MS
+    const c = correction(closure, CLOSURE_CORRECTION_TEXT, at, correctionRun(at))
+    corrections.push(c)
+    extraScenes.correctsEmphasis = { correctionId: c.id, topicId: closure.id }
+  }
+  if (extras.has('failsNext')) {
+    const last = slots[slots.length - 1]
+    const next =
+      last.slot === '12' ? { date: last.date, slot: '20' as const } : { date: addDaysToDate(last.date, 1), slot: '12' as const }
+    const editionId = editionIdOf(next.date, next.slot)
+    const fail = {
+      editionId,
+      runId: runIdOf(runStartOf(next.date, next.slot), fakeRng(`${seed}/${editionId}/run`)),
+      reasonKind: 'quota' as const,
+      reason: '使用量の上限に届いたため、この回は版を作れませんでした',
+    }
+    editionFails.push({
+      id: editionFailIdOf(fail),
+      v: 1,
+      createdAt: slotTimeMs(next.date, next.slot) - 2 * MINUTE_MS,
+      by: 'connector',
+      ai: 'claude',
+      model: FAKE_MODEL,
+      ...fail,
+    })
+    extraScenes.failsNext = editionId
+  }
+  if (extras.has('newerTopic')) {
+    // 記録の形の版だけを替える（id・中身は同じ。アプリは中身を読まずに「新しい形の記録」と出す）
+    const i = NEWER_TOPIC_RANK - 1
+    newest.topics[i] = { ...newest.topics[i], v: 2 } as unknown as Topic
+    extraScenes.newerTopic = newest.topics[i].id
+  }
+  if (extras.has('newerEdition')) {
+    newest.edition = { ...newest.edition, v: 2 } as unknown as Edition
+    extraScenes.newerEdition = newest.edition.id
+  }
   return {
     editions,
     editionFails,
-    corrections,
+    corrections: corrections.sort((a, b) => a.createdAt - b.createdAt),
     scenes: {
       chain: [chain[0].id, chain[1].id, chain[2].id],
       failedEditionId,
       corrections: { chainFirst: chainFirst.id, twice: twice.id, oldest: old.id },
       changingTerm: { key: RULING_JP_KEY, termId: termIdOf(RULING_JP_KEY), asOfBefore, asOfAfter, changedIn },
+      ...(extras.size ? { extras: extraScenes } : {}),
     },
   }
 }
 
 /** 続報の鎖の話題を置く順位（国内・経済の14位） */
 const CHAIN_RANK = 14
+/** extras の newerTopic が v: 2 にする、いちばん新しい版の話題の順位（20位） */
+const NEWER_TOPIC_RANK = 20
 
 // ---------- 記録をコネクタが足す順に並べる ----------
 

@@ -2,7 +2,10 @@
 // 決まった文（「この話題では特になし」など）は記録に持たず、null・kind: 'none' などの印で持つ。アプリがここの文を出す（揺れを無くす）。
 // 知らない値（後の版で足した値）の扱いも表のとおりにする（地域・ジャンルは総合にだけ出す・ラベルは出さない・立場は「不明」と同じ・
 // 枠は版として出さない・作れなかった理由は「そのほか」）。
-import { isYm } from './jst'
+// 段階2で、版の日付・経緯の日付・出典の日時の書き方（editionDateText・editionLongDateText・editionNameText・timelineWhenText・
+// publishedAtText・sourceDateText）を足した。形の分からない値は null（書かない）にする（開発。設計: 段階2の 1.17・1.20）
+import { weekdayJaOf } from './dates'
+import { isJstDateTime, isTimelineWhen, isYm, isYmd } from './jst'
 import {
   CONCLUSION_LABEL_VALUES,
   GENRE_VALUES,
@@ -138,4 +141,67 @@ export function editionSlotText(slot: unknown): string | null {
 export function asOfText(asOf: unknown): string | null {
   if (!isYm(asOf)) return null
   return `${Number(asOf.slice(0, 4))}年${Number(asOf.slice(5, 7))}月時点`
+}
+
+// ---------- 日付の書き方（段階2の画面。docs/SPEC.md の 9.・7.1。開発。設計: 段階2の 1.20） ----------
+
+/** 'YYYY-MM-DD' を数にする（本当に無い日・形の違う物は null） */
+function ymdOf(date: unknown): { y: number; m: number; d: number } | null {
+  if (!isYmd(date)) return null
+  return { y: Number(date.slice(0, 4)), m: Number(date.slice(5, 7)), d: Number(date.slice(8, 10)) }
+}
+
+/** 版の日付の短い形（ヘッダー・一覧の「11/15（日）」。月と日は0で埋めない。形の違う日付は null） */
+export function editionDateText(date: unknown): string | null {
+  const v = ymdOf(date)
+  return v ? `${v.m}/${v.d}（${weekdayJaOf(date)}）` : null
+}
+
+/** 版の日付の長い形（クリップの「2026年11月15日（日）」。docs/SPEC.md の 9. の例。形の違う日付は null） */
+export function editionLongDateText(date: unknown): string | null {
+  const v = ymdOf(date)
+  return v ? `${v.y}年${v.m}月${v.d}日（${weekdayJaOf(date)}）` : null
+}
+
+/** 版の名前（ヘッダーの版の表示・版の一覧・追いつきの「11/15（日）12:00版」。日付か枠が分からなければ null） */
+export function editionNameText(date: unknown, slot: unknown): string | null {
+  const d = editionDateText(date)
+  const s = editionSlotText(slot)
+  return d === null || s === null ? null : `${d}${s}`
+}
+
+/**
+ * 経緯の when（記事に書かれた日付のまま。'YYYY'・'YYYY-MM'・'YYYY-MM-DD'）を「2026年」「2026年11月」「2026年11月15日」に。
+ * null・形の違う物は null（日付を書かず、文だけ出す。docs/SPEC.md の 7.1）
+ */
+export function timelineWhenText(when: unknown): string | null {
+  if (!isTimelineWhen(when)) return null
+  const y = Number(when.slice(0, 4))
+  if (when.length === 4) return `${y}年`
+  const m = Number(when.slice(5, 7))
+  if (when.length === 7) return `${y}年${m}月`
+  return `${y}年${m}月${Number(when.slice(8, 10))}日`
+}
+
+/**
+ * 出典の掲載日時（publishedAt）の書き方: 日本時間の時差つきの日時は「2026年11月15日 11:30」（秒は書かない）、日付だけは
+ * 「2026年11月15日」。null・形の違う物は null（書かない。補足の文か「掲載日時は不明」は sourceDateText）
+ */
+export function publishedAtText(publishedAt: unknown): string | null {
+  if (isJstDateTime(publishedAt)) {
+    const v = ymdOf(publishedAt.slice(0, 10))!
+    return `${v.y}年${v.m}月${v.d}日 ${publishedAt.slice(11, 16)}`
+  }
+  const v = ymdOf(publishedAt)
+  return v ? `${v.y}年${v.m}月${v.d}日` : null
+}
+
+/** 掲載日時が分からない出典の言葉（publishedAt が null で、補足の文 publishedNote も無い時。開発。設計: 段階2の 1.17） */
+export const PUBLISHED_UNKNOWN_TEXT = '掲載日時は不明'
+
+/** 出典の日時の欄に出す言葉（publishedAtText か、無ければ補足の文 publishedNote、それも無ければ「掲載日時は不明」） */
+export function sourceDateText(source: { publishedAt: unknown; publishedNote?: unknown }): string {
+  const at = publishedAtText(source.publishedAt)
+  if (at !== null) return at
+  return typeof source.publishedNote === 'string' && source.publishedNote.trim() ? source.publishedNote : PUBLISHED_UNKNOWN_TEXT
 }

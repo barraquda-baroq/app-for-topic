@@ -2,23 +2,35 @@
 // 一覧だけを読む・既読と「知ってる」を付ける関数（重なり無し・30件まで・その版の話題だけ・30日の外の版・新しい形の記録・上限を超える
 // 記録は書かない・知らない欄を残す）・端末への書き込みと送信待ちが一緒・3層（保存の前も画面に出す・保存中の変更を重ねる・届いた変更と
 // 3者マージ）・期限で消した物をメモリからも外す・版を開く（話題は版ごとに読む・そろうまで前の版・欠けた話題を直接読む・訂正を話題に付ける・
-// 出典の社の一覧の差し替え）・別のタブの書き込みを読み直す・保存できない時。保存先（Dexie。fake-indexeddb）は本物
+// 出典の社の一覧の差し替え）・別のタブの書き込みを読み直す・保存できない時。保存先（Dexie。fake-indexeddb）は本物。
+// 段階2の読む口（設計: 段階2の 1.8・1.9・1.16）: loadTopicView・threadOf・catchUpTargets・loadCatchUp・editionRows
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence, type AnyRecord, type Change, type Persistence } from '../db/persistence'
 import { correctionIdOf, termIdOf } from '../domain/ids'
 import { pressKnownTerm } from '../domain/known'
 import type { CorrectionRecord, EditionFail, KnownTerm, ReadMark } from '../domain/types'
 import { FAKE_OUTLETS } from '../test/fixtures/fakeOutlets'
-import { fakeRecordsOf, makeFakeEdition, type FakeEdition } from '../test/fixtures/fakeEditions'
+import {
+  CHAIN_CORRECTION_TEXT,
+  fakeRecordsOf,
+  makeFakeEdition,
+  makeFakeMonth,
+  type FakeEdition,
+  type FakeMonth,
+} from '../test/fixtures/fakeEditions'
 import {
   applyRemoteChanges,
+  catchUpTargets,
+  editionRows,
   expireLocalRecords,
   flushNow,
   getRawUserRecords,
   initStore,
   isKnown,
   know,
+  loadCatchUp,
   loadEditionView,
+  loadTopicView,
   markRead,
   markSeen,
   noteSyncDownloaded,
@@ -28,8 +40,11 @@ import {
   resetStoreForTests,
   setTopicFetcher,
   setTopicOutlets,
+  threadOf,
+  threadsOf,
   unknow,
   useApp,
+  type EditionRow,
   type EditionView,
 } from './appStore'
 
@@ -469,5 +484,234 @@ describe('別のタブ・アカウントの切り替え・保存できない時'
     expect(useApp.getState().user.reads[TODAY.edition.id].topicIds).toEqual([TODAY.edition.order[0]])
     expect(await flushNow()).toBe(true)
     expect(useApp.getState().saveStatus).toBe('saved')
+  })
+})
+
+// ---------- 段階2の画面の読む口（設計: 段階2の 1.8・1.9・1.16・4.1） ----------
+
+/** 2026-11-15 14:10（日本時間。段階2の E2E・見本の時刻） */
+const T_1410 = Date.UTC(2026, 10, 15, 5, 10)
+/** 2026-11-15 20:00（日本時間）から m 分 */
+const at20 = (m: number) => Date.UTC(2026, 10, 15, 11, m)
+/** 11/13 12:00版〜11/15 12:00版（11/14 12:00版は作れなかった印だけ。続報の鎖は 11/13 12:00 → 11/14 20:00 → 11/15 12:00） */
+const MONTH = makeFakeMonth({ until: '2026-11-15', untilSlot: '12', days: 3, seed: 'store-stage2' })
+
+async function receiveMonth(p: Persistence, month: FakeMonth = MONTH): Promise<void> {
+  await p.applyRemote(
+    fakeRecordsOf(month)
+      .filter((r) => r.table !== 'termPacks')
+      .map((r) => asChange(r.table, r.record)),
+  )
+}
+
+async function startedWithMonth(prepare?: (p: Persistence) => Promise<void>): Promise<Persistence> {
+  vi.setSystemTime(T_1410)
+  const p = await started(async (db) => {
+    await receiveMonth(db)
+    await prepare?.(db)
+  })
+  setTopicOutlets(FAKE_OUTLETS)
+  await openEdition(null)
+  return p
+}
+
+const editionOf = (id: string) => MONTH.editions.find((e) => e.edition.id === id)!
+
+describe('loadTopicView（1本の話題を id で読む）', () => {
+  it('版の記録があり30日の内の話題を、写しと足された順の訂正で返す', async () => {
+    await startedWithMonth()
+    const first = await loadTopicView(MONTH.scenes.chain[0])
+    expect(first.kind).toBe('ready')
+    if (first.kind !== 'ready') return
+    expect(first.topic.id).toBe(MONTH.scenes.chain[0])
+    expect(first.corrections.map((c) => c.text)).toEqual([CHAIN_CORRECTION_TEXT])
+    // 出典のリンクは、今の社の一覧（作り物）で決める
+    expect(first.topic.sources.some((src) => src.link?.startsWith('https://example.com/'))).toBe(true)
+    const twice = await loadTopicView(MONTH.scenes.corrections.twice)
+    if (twice.kind !== 'ready') throw new Error(twice.kind)
+    expect(twice.corrections).toHaveLength(2)
+    expect(twice.corrections[0].createdAt).toBeLessThan(twice.corrections[1].createdAt)
+  })
+
+  it('30日の外・端末に無い・版の記録の無い・order に無い話題は none。話題か版の記録が新しい形なら newer', async () => {
+    const newest = editionOf('2026-11-15-12')
+    const stray = { ...newest.topics[3], id: '2026-11-15-12-zzzzzzzz' }
+    const newerTopic = { ...newest.topics[19], v: 2 }
+    const newerEdition = { ...editionOf('2026-11-14-20').edition, v: 2 }
+    await startedWithMonth(async (p) => {
+      await p.applyRemote([asChange('topics', stray), asChange('topics', newerTopic), asChange('editions', newerEdition)])
+    })
+    expect(await loadTopicView(MONTH.scenes.chain[0], { now: T_1410 + 40 * 24 * 60 * 60 * 1000 })).toEqual({ kind: 'none' })
+    expect(await loadTopicView('2026-11-15-12-aaaaaaaa')).toEqual({ kind: 'none' })
+    expect(await loadTopicView('2026-11-12-12-aaaaaaaa')).toEqual({ kind: 'none' })
+    expect(await loadTopicView(stray.id)).toEqual({ kind: 'none' })
+    expect(await loadTopicView('not-a-topic')).toEqual({ kind: 'none' })
+    expect(await loadTopicView(newerTopic.id)).toEqual({ kind: 'newer' })
+    expect(await loadTopicView(MONTH.scenes.chain[1])).toEqual({ kind: 'newer' })
+  })
+
+  it('端末の中を読む前は none', async () => {
+    expect(await loadTopicView(MONTH.scenes.chain[0])).toEqual({ kind: 'none' })
+  })
+})
+
+describe('threadOf（続報のつながり）', () => {
+  it('同じ threadId の、出してよい話題を版の id の順に（id・版・見出し）', async () => {
+    await startedWithMonth()
+    const chain = await threadOf(MONTH.scenes.chain[0])
+    expect(chain.map((t) => [t.id, t.editionId])).toEqual([
+      [MONTH.scenes.chain[0], '2026-11-13-12'],
+      [MONTH.scenes.chain[1], '2026-11-14-20'],
+      [MONTH.scenes.chain[2], '2026-11-15-12'],
+    ])
+    expect(chain[0].headline).toBe(editionOf('2026-11-13-12').topics[13].headline)
+    // 続報でない話題は自分だけ。形の違う id は空
+    const lone = editionOf('2026-11-15-12').topics[0]
+    expect(await threadOf(lone.threadId)).toEqual([{ id: lone.id, editionId: lone.editionId, headline: lone.headline }])
+    expect(await threadOf('nope')).toEqual([])
+    const both = await threadsOf([lone.threadId, MONTH.scenes.chain[0], lone.threadId])
+    expect(Object.keys(both).sort()).toEqual([lone.threadId, MONTH.scenes.chain[0]].sort())
+    expect(both[MONTH.scenes.chain[0]]).toHaveLength(3)
+  })
+
+  it('30日の外・版の記録が新しい形の話題は入れない', async () => {
+    await startedWithMonth(async (p) => {
+      await p.applyRemote([asChange('editions', { ...editionOf('2026-11-14-20').edition, v: 2 })])
+    })
+    expect((await threadOf(MONTH.scenes.chain[0])).map((t) => t.id)).toEqual([MONTH.scenes.chain[0], MONTH.scenes.chain[2]])
+    // 12/13 からは 11/13 の版（鎖の1本目）が30日の外
+    const later = Date.UTC(2026, 11, 13, 5, 0)
+    expect((await threadOf(MONTH.scenes.chain[0], { now: later })).map((t) => t.id)).toEqual([MONTH.scenes.chain[2]])
+  })
+})
+
+describe('catchUpTargets・loadCatchUp（追いつき）', () => {
+  it('最後に見た版より後で、出している版より前の版（新しい順）。付いていかない時・見た版が無い時は []', async () => {
+    await startedWithMonth()
+    const now = Date.now()
+    expect(catchUpTargets(useApp.getState(), now)).toEqual([])
+    expect(markSeen('2026-11-13-12').ok).toBe(true)
+    // 作れなかった枠（11/14 12:00）は数えない
+    expect(catchUpTargets(useApp.getState(), now)).toEqual(['2026-11-14-20', '2026-11-13-20'])
+    expect(markSeen('2026-11-13-20').ok).toBe(true)
+    expect(catchUpTargets(useApp.getState(), now)).toEqual(['2026-11-14-20'])
+    await openEdition('2026-11-14-20')
+    expect(catchUpTargets(useApp.getState(), now)).toEqual([])
+  })
+
+  it('loadCatchUp: 版ごとに読み、続報は最新の1本（最新が今の版にある鎖は外す）・重大印 → order の位置 → 新しい版の順・訂正を付ける', async () => {
+    await startedWithMonth()
+    const items = await loadCatchUp(['2026-11-14-20', '2026-11-13-20', '2026-11-13-12'])
+    const ids = items.map((i) => i.topic.id)
+    // 3版 × 20本から、鎖の2本（今の版に3本目がある）を除く
+    expect(items).toHaveLength(58)
+    for (const c of MONTH.scenes.chain) expect(ids).not.toContain(c)
+    expect(items.slice(0, 3).map((i) => [i.topic.major, i.edition.id])).toEqual([
+      [true, '2026-11-14-20'],
+      [true, '2026-11-13-20'],
+      [true, '2026-11-13-12'],
+    ])
+    expect(items[3].edition.id).toBe('2026-11-14-20')
+    expect(items[3].topic.id).toBe(editionOf('2026-11-14-20').edition.order[1])
+    const old = items.find((i) => i.topic.id === MONTH.scenes.corrections.oldest)
+    expect(old?.corrections).toHaveLength(1)
+    expect(items.filter((i) => i.corrections.length).map((i) => i.topic.id)).toEqual([MONTH.scenes.corrections.oldest])
+    // 今の版・出せない版は飛ばす
+    expect(await loadCatchUp(['2026-11-15-12', '2026-11-14-12', '2026-11-01-12'])).toEqual([])
+  })
+})
+
+describe('editionRows（版の一覧の行）', () => {
+  const kinds = (rows: EditionRow[]) =>
+    rows.map((r) => `${r.date}-${r.slot}:${r.kind}${r.kind === 'edition' && r.receiving ? '(受け取り中)' : ''}`)
+
+  it('いちばん古い記録の枠から、時刻の上でいちばん新しい枠まで（新しい順）。作れなかった枠は理由と文', async () => {
+    await startedWithMonth()
+    const rows = await editionRows(T_1410, true)
+    expect(kinds(rows)).toEqual([
+      '2026-11-15-12:edition',
+      '2026-11-14-20:edition',
+      '2026-11-14-12:failed',
+      '2026-11-13-20:edition',
+      '2026-11-13-12:edition',
+    ])
+    expect(rows[2]).toEqual({
+      date: '2026-11-14',
+      slot: '12',
+      kind: 'failed',
+      reasonKind: 'quota',
+      reason: MONTH.editionFails[0].reason,
+    })
+  })
+
+  it('いちばん新しい枠に何も無い時は、30分たって同期が落ち着いてから「届いていません」。前の枠の抜けはすぐ', async () => {
+    await startedWithMonth()
+    expect(kinds(await editionRows(at20(29), true))[0]).toBe('2026-11-15-12:edition')
+    expect(kinds(await editionRows(at20(40), false))[0]).toBe('2026-11-15-12:edition')
+    expect(kinds(await editionRows(at20(30), true))[0]).toBe('2026-11-15-20:missing')
+    // 次の日の 12:40 では、11/15 20:00 はもう前の枠（すぐ「届いていません」）、11/16 12:00 は30分たっている
+    expect(kinds(await editionRows(Date.UTC(2026, 10, 16, 3, 40), false)).slice(0, 2)).toEqual([
+      '2026-11-15-20:missing',
+      '2026-11-15-12:edition',
+    ])
+  })
+
+  it('新しい形の版・いちばん新しい枠の作れなかった印・話題がそろわない版（受け取り中）', async () => {
+    const newest = editionOf('2026-11-15-12')
+    const p = await startedWithMonth(async (db) => {
+      await db.applyRemote([
+        asChange('editions', { ...editionOf('2026-11-13-20').edition, v: 2 }),
+        asChange('editionFails', {
+          ...MONTH.editionFails[0],
+          id: '2026-11-15-20-ffffffff',
+          editionId: '2026-11-15-20',
+          reason: '',
+        }),
+      ])
+    })
+    // いちばん新しい版の話題を2本消して、受け取り中にする（端末の中だけ。受け取る前の形）
+    const stored = await p.getTopics(newest.edition.order)
+    expect(stored.every(Boolean)).toBe(true)
+    const partial = {
+      ...newest.edition,
+      order: [...newest.edition.order.slice(0, 18), '2026-11-15-12-xxxxxxx1', '2026-11-15-12-xxxxxxx2'],
+    }
+    await applyRemoteChanges([asChange('editions', partial)])
+    const rows = await editionRows(at20(10), false)
+    expect(kinds(rows)).toEqual([
+      '2026-11-15-20:failed',
+      '2026-11-15-12:edition(受け取り中)',
+      '2026-11-14-20:edition',
+      '2026-11-14-12:failed',
+      '2026-11-13-20:newer',
+      '2026-11-13-12:edition',
+    ])
+    expect(rows[0]).toMatchObject({ kind: 'failed', reason: null })
+  })
+
+  it('クラウドにも無いと分かった話題は欠けに数えない', async () => {
+    const newest = editionOf('2026-11-15-12')
+    await startedWithMonth(async (db) => {
+      await db.applyRemote([
+        asChange('editions', { ...newest.edition, order: [...newest.edition.order, '2026-11-15-12-xxxxxxx1'] }),
+      ])
+    })
+    expect(kinds(await editionRows(T_1410, true))[0]).toBe('2026-11-15-12:edition(受け取り中)')
+    setTopicFetcher(async (ids) => ({ found: [], missing: [...ids] }))
+    noteSyncDownloaded(true)
+    await vi.waitFor(() => expect(ready(useApp.getState().opened.view).editionId).toBe('2026-11-15-12'))
+    expect(kinds(await editionRows(T_1410, true))[0]).toBe('2026-11-15-12:edition')
+  })
+
+  it('記録が1つも無ければ []。30日の外の記録は数えない', async () => {
+    await started()
+    expect(await editionRows(T_1410, true)).toEqual([])
+    resetStoreForTests()
+    await startedWithMonth()
+    const late = Date.UTC(2026, 11, 13, 5, 0)
+    const rows = await editionRows(late, true)
+    // 12/13 からは 11/13 の版が30日の外。11/14 12:00 の作れなかった印から 12/13 12:00 まで
+    expect(rows.at(-1)).toMatchObject({ date: '2026-11-14', slot: '12', kind: 'failed' })
+    expect(rows[0]).toMatchObject({ date: '2026-12-13', slot: '12', kind: 'missing' })
   })
 })

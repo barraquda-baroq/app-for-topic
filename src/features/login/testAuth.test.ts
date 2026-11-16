@@ -1,7 +1,8 @@
 // テストの時だけ効く「ログインした状態」の印（localStorage の topic-studio:test-auth。DS の docs/SPEC.md の 2.10）と、段階1で足した
 // 作り物の版を端末（Dexie）に入れる道（topic-studio:test-editions・putFakeEditions。docs/SPEC.md の 16.3 の「開発サーバー」）。
 // 公開するビルド（import.meta.env.DEV が false）で効かないことは、処理の頭の import.meta.env.DEV の確かめで決まる。
-// 作り物の版を入れる所は、本物のストアと保存先（fake-indexeddb）で確かめる（司令塔だけを差し替える）
+// 作り物の版を入れる所は、本物のストアと保存先（fake-indexeddb）で確かめる（司令塔だけを差し替える）。
+// 段階2で足した作り方（extras・withholdNewest・onlyNewest。設計: 段階2の 5.3）を putFakeEditions が渡す事も確かめる
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPersistence, type Persistence } from '../../db/persistence'
 import { initStore, resetStoreForTests, useApp } from '../../store/appStore'
@@ -139,6 +140,42 @@ describe('作り物の版を端末に入れる（docs/SPEC.md の 16.3 の「開
     expect(b.scenes).toEqual(a.scenes)
     expect(await p.listEditions()).toHaveLength(7)
     expect(await p.outboxCount()).toBe(0)
+  })
+
+  it('extras を makeFakeMonth に渡す（足した訂正・作れなかった印・新しい形の版も端末に入る）', async () => {
+    const p = await openStore()
+    const r = await putFakeEditions({ extras: ['correctsEmphasis', 'failsNext', 'newerEdition'] })
+    expect(r).toMatchObject({ editions: 4, topics: 80, editionFails: 2, corrections: 5, newestEditionId: '2026-11-15-12' })
+    expect(r.scenes.extras?.failsNext).toBe('2026-11-15-20')
+    expect(await p.listEditionFails()).toHaveLength(2)
+    // いちばん新しい版は新しい形の記録なので、トップは前の版に付いていく
+    const s = useApp.getState()
+    expect(s.newerEditions).toEqual(['2026-11-15-12'])
+    expect(s.opened.view).toMatchObject({ kind: 'ready', editionId: '2026-11-14-20' })
+  })
+
+  it('withholdNewest: いちばん新しい版の話題を order の後ろから n本入れない（版の記録は入れ、トップは前の版のまま待つ）', async () => {
+    const p = await openStore()
+    const r = await putFakeEditions({ until: '2026-11-15', untilSlot: '12', withholdNewest: 2 })
+    expect(r).toMatchObject({ editions: 4, topics: 78, newestEditionId: '2026-11-15-12' })
+    const newest = (await p.listEditions()).find((e) => e.id === '2026-11-15-12') as unknown as { order: string[] }
+    const present = await p.getTopics(newest.order)
+    expect(present.map((t) => t !== null)).toEqual([...Array(18).fill(true), false, false])
+    expect(useApp.getState().opened).toMatchObject({ waiting: '2026-11-15-12', view: { editionId: '2026-11-14-20' } })
+  })
+
+  it('onlyNewest: いちばん新しい版の記録と話題だけ（＋withholdNewest: 20 で、出せる版が1つも無い）', async () => {
+    const p = await openStore()
+    const r = await putFakeEditions({ onlyNewest: true })
+    expect(r).toMatchObject({ editions: 1, topics: 20, editionFails: 0, corrections: 0, newestEditionId: '2026-11-15-12' })
+    expect((await p.listEditions()).map((e) => e.id)).toEqual(['2026-11-15-12'])
+    expect(await p.listCorrections()).toEqual([])
+    resetStoreForTests()
+    const q = await openStore()
+    const none = await putFakeEditions({ onlyNewest: true, withholdNewest: 20 })
+    expect(none).toMatchObject({ editions: 1, topics: 0, editionFails: 0, corrections: 0 })
+    expect(await q.getTopics(['2026-11-15-12-zzzzzzzz'])).toEqual([null])
+    expect(useApp.getState().opened).toEqual({ follow: true, view: null, waiting: '2026-11-15-12' })
   })
 
   it('両方の印があれば、ログインした状態にしてから作り物の版を入れる', async () => {

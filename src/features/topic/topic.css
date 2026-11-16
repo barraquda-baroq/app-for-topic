@@ -1,0 +1,433 @@
+/* ===== 話題の詳細（docs/SPEC.md の 9. の「詳細」） =====
+   S・M の下からのシート・L の列に重ねるパネル・詳細の中の並び・用語の印と説明の箱・クリップの窓（src/features/topic）。
+   色は src/styles.css の変数だけを使い、強調の色（--emphasis）は .emph（src/styles.css）だけで使う（src/screensCss.test.ts）。
+   記事の字（本文・用語の説明・元記事）は設定の字の大きさ（--read-size・--read-line・--read-title。<html data-text-size>）に従い、
+   頭の行・ボタン・下の細い字は従わない（360px の並びを崩さない。設計: 段階2の 1.18・3.4）。testid の印（data-*）は選ばない */
+
+/* ----- シート（今の Modal。className topic-sheet）・パネル ----- */
+
+/* シートの中の端まで送った時に、後ろ（ページ）へスクロールを移さない（下へ引いて閉じる動きは作らない。設計: 段階2の 8. の 2） */
+.modal.topic-sheet .modal-body {
+  overscroll-behavior: contain;
+}
+
+/* シートの題（版の行「11/15（日）12:00版・国内・テクノロジー」。設計: 段階2の 1.9 の「短く、上に固定される」）は、L のパネルの題と同じ
+   15px にし、入らない時は句の切れ目で折る（開発。見本の見直しで分かった: 小さな画面の題の 17px のままだと 390px で2行になり、
+   「テクノロ／ジー」「事故・事／件」と語の中で切れていた） */
+.modal.topic-sheet .modal-head h2 {
+  font-size: 15px;
+  text-wrap: pretty;
+  word-break: auto-phrase;
+}
+
+/* L の列に重ねるパネル（列の差し込み口 .panel-slot いっぱい。中だけをスクロールする） */
+.topic-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+  box-shadow: var(--shadow);
+}
+
+.topic-panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.topic-panel-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+/* 題・見出しは押せる所ではなく、開いた時にフォーカスを置く所（tabIndex -1）なので、枠を出さない（読み上げは場所を読む） */
+.topic-panel-title:focus {
+  outline: none;
+}
+
+.topic-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-4);
+}
+
+.topic-loading {
+  margin: var(--sp-4) 0;
+}
+
+/* ----- 中身 ----- */
+.topic-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+  font-size: var(--read-size);
+  line-height: var(--read-line);
+  overflow-wrap: anywhere;
+}
+
+.topic-detail p {
+  margin: 0;
+}
+
+/* 頭の行（重大・続報。小さな字。設計: 段階2の 1.17） */
+.topic-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* 重大印の札（太字・1px の枠・字の色。オレンジは使わない。色に頼らない。■3 の A） */
+.topic-major {
+  padding: 0 6px;
+  border: 1px solid var(--major-line);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.topic-tag {
+  font-weight: 600;
+}
+
+/* 訂正の箱（見出しの上。--surface-3 の地・左に 3px の --border-strong。強調なし。■4 の A） */
+.topic-corrections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 3px solid var(--correction-line);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--correction-ground);
+  color: var(--text);
+}
+
+.topic-title {
+  font-size: var(--read-title);
+  line-height: 1.4;
+  text-wrap: pretty;
+  word-break: auto-phrase;
+}
+
+.topic-title:focus {
+  outline: none;
+}
+
+/* 結論（ラベルの札・速報・未確認・補足） */
+.topic-conclusion {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.topic-conclusion-labels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 小さな字の札（枠だけ・グレー。結論ラベル・当事者の立場） */
+.topic-label {
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.topic-breaking {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.topic-conclusion-note {
+  color: var(--text-muted);
+}
+
+/* 区切り（だから何？・当事者・見解・経緯・用語・元記事） */
+.topic-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--rule);
+}
+
+.topic-section-head {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.topic-sub {
+  margin-top: var(--sp-1);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.topic-detail .topic-none {
+  color: var(--text-muted);
+}
+
+.topic-so-what {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 決まった注記（当事者の見出しの文・AI のジャンルの注記・共通の注記） */
+.topic-note {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.topic-follow-up-head {
+  font-weight: 700;
+}
+
+.topic-axis {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.topic-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.topic-stakeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.topic-stakeholder-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.topic-stakeholder-name {
+  font-weight: 700;
+}
+
+.topic-stance-note,
+.topic-reason {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* 経緯（書いた順。日付は記事に書かれたまま。null は文だけ） */
+.topic-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.topic-when {
+  margin-right: var(--sp-2);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* 前の話題・続報へのリンク（シートの中身を替える。指で押せる高さ） */
+.topic-thread-link {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* 確かめられなかった点（たたむ） */
+.topic-unverified summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.topic-unverified .topic-list {
+  gap: var(--sp-1);
+  padding-left: var(--sp-4);
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* 用語の一覧 */
+.topic-term {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.topic-term-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.topic-term-name {
+  font-weight: 700;
+}
+
+.term-asof {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ［知ってる］の後（「知ってるにしました ［取り消す］」） */
+.term-known-done {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* 本文の中の用語の印（■2 の A: 語の下に細い点線。ボタンの見た目は消し、字は本文のまま。押すと段落の下に説明の箱） */
+.term-mark {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  text-decoration: underline dotted var(--term-line);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+
+.term-mark[aria-expanded='true'] {
+  text-decoration-style: solid;
+}
+
+/* 説明の箱（段落のすぐ下。1度に1つ） */
+.term-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  margin: var(--sp-1) 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-2) var(--sp-3) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.term-note-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  align-self: stretch;
+}
+
+.term-note-term {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+}
+
+/* 元記事（リンクは新しいタブ。リンクにしない URL は文で、選べる） */
+.topic-source {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.topic-source-link .icon {
+  margin-left: 2px;
+  vertical-align: -1px;
+  color: inherit;
+}
+
+.topic-source-meta {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.topic-url {
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* 下の細い字（照合の件数・順位の理由・書いた AI） */
+.topic-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--rule);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* ----- ［クリップ］・使えない時の窓 ----- */
+.topic-clip .icon {
+  width: 16px;
+  height: 16px;
+  color: inherit;
+}
+
+.clip-note {
+  margin: 0 0 var(--sp-2);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* 字の大きさは .textarea のまま（指の端末では 16px。iPhone で欄にフォーカスした時に画面が拡大しないように） */
+.clip-text {
+  white-space: pre-wrap;
+}

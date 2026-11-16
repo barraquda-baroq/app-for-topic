@@ -1,6 +1,8 @@
 // 色のトークン（src/styles.css）が DS と同じ値か、字の色が地の上で読めるか、差し色とログインの画面の地がグレーか、DS だけの色を
 // 持ち込んでいないか、部品が色を直接書いていないか、幅の区分の値がスクリプトとそろっているかを確かめる（docs/SPEC.md の 10.・14.3。
-// DS の src/styles.test.ts から、区分・ラベル・カレンダーの色の確かめを外した物）
+// DS の src/styles.test.ts から、区分・ラベル・カレンダーの色の確かめを外した物）。
+// 段階2で、TS だけの色（本文の強調 --emphasis・用語の印・重大印・既読の別名）と記事の字の大きさの確かめを足した（設計: 段階2の 3.3）。
+// 画面の CSS の書き方（--emphasis を使う所・testid の印を選ばない）は src/screensCss.test.ts
 import { describe, expect, it } from 'vitest'
 import { WIDTH_L, WIDTH_M } from './ui/hooks'
 
@@ -221,7 +223,9 @@ describe('色のトークン（DS の docs/SPEC.md の 4.5 と同じ値）', () 
 })
 
 describe('字の色が地の上で読める（WCAG の比）', () => {
-  const TEXTS = ['--text', '--text-muted', '--text-faint', '--accent']
+  // 本文の強調（--emphasis）と既読の見出し（--read-text）も、ほかの字と同じく5つの地すべてで確かめる（条件で地を減らさない。
+  // 一覧の地 --bg・シートとパネルの --surface・--surface-2・訂正の箱の --surface-3・選んでいる所の --accent-soft。設計: 段階2の 3.2・3.3）
+  const TEXTS = ['--text', '--text-muted', '--text-faint', '--accent', '--emphasis', '--read-text']
   const GROUNDS = ['--bg', '--surface', '--surface-2', '--surface-3', '--accent-soft']
 
   it.each(THEMES)('%s: 字の色は、どの地の上でも 4.5:1 以上', (theme) => {
@@ -250,9 +254,77 @@ describe('字の色が地の上で読める（WCAG の比）', () => {
       expect(contrast(color(theme, fg), color(theme, bg)), `${theme}: ${fg} / ${bg}`).toBeGreaterThanOrEqual(4.5)
     }
   })
+
+  it.each(THEMES)('%s: 用語の印の点線（--term-line）と重大印の線（--major-line）は、一覧とシートの地の上で 3:1 以上', (theme) => {
+    for (const line of ['--term-line', '--major-line']) {
+      for (const ground of ['--bg', '--surface']) {
+        expect(contrast(color(theme, line), color(theme, ground)), `${theme}: ${line} / ${ground}`).toBeGreaterThanOrEqual(3)
+      }
+    }
+  })
 })
 
-describe('差し色とログインの画面はグレー（DS と同じ。docs/SPEC.md の 10.。オレンジは起動アニメーションとアイコンだけ）', () => {
+describe('TS だけの色（docs/SPEC.md の 10.。設計: 段階2の 3.1・3.2）', () => {
+  /** OKLCH の色相（度）・彩度・明るさ */
+  const lch = (hex: string) => {
+    const [l, a, b] = oklab(hex)
+    return { l, c: Math.hypot(a, b), h: ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360 }
+  }
+
+  it('本文の強調（--emphasis）は3つの外観の規則それぞれに書き、ほかは今の色の別名（外観で変わらない :root）', () => {
+    for (const theme of THEMES) expect(ownVars(theme).get('--emphasis'), theme).toMatch(/^#[0-9a-f]{6}$/)
+    // 作者が A を選んだ強調の色（■1 の今の決め方。ホワイト・ダーク・ディープダーク）
+    expect(THEMES.map((t) => ownVars(t).get('--emphasis'))).toEqual(['#9a5200', '#f0a25e', '#c08050'])
+    expect(VARS.white.get('--term-line')).toBe('var(--text-faint)')
+    expect(VARS.white.get('--major-line')).toBe('var(--text)')
+    expect(VARS.white.get('--read-text')).toBe('var(--text-muted)')
+    expect(VARS.white.get('--correction-ground')).toBe('var(--surface-3)')
+    expect(VARS.white.get('--correction-line')).toBe('var(--border-strong)')
+    for (const theme of ['dark', 'deep-dark'] as const) {
+      for (const name of ['--term-line', '--major-line', '--read-text', '--correction-ground', '--correction-line'])
+        expect(ownVars(theme).has(name), `${theme} の ${name}`).toBe(false)
+    }
+  })
+
+  it.each(THEMES)('%s: 強調はオレンジ（OKLCH の色相 55〜65°・灰色でない）で、起動アニメーションと同じ色相', (theme) => {
+    const { c, h } = lch(color(theme, '--emphasis'))
+    expect(h, `${theme} の色相`).toBeGreaterThanOrEqual(55)
+    expect(h, `${theme} の色相`).toBeLessThanOrEqual(65)
+    expect(c, `${theme} の彩度`).toBeGreaterThan(0.08)
+  })
+
+  it('ディープダークの強調は、本文の字（--text）より明るくしない（明るい色を抑える外観）', () => {
+    expect(lch(color('deep-dark', '--emphasis')).l).toBeLessThan(lch(color('deep-dark', '--text')).l)
+  })
+})
+
+describe('記事の字の大きさ（<html data-text-size>。docs/SPEC.md の 9.。設計: 段階2の 3.4）', () => {
+  /** その規則に書いた変数 */
+  const varsOf = (selector: string) => {
+    const own = rules.filter((r) => r.selector === selector)
+    expect(own, selector).toHaveLength(1)
+    return Object.fromEntries([...declarations(own[0].body)].filter(([k]) => k.startsWith('--read-')))
+  }
+
+  it('中（既定）は外観で変わらない :root、小・大は :root[data-text-size] に、同じ変数の組を書く', () => {
+    const base = Object.fromEntries([...VARS.white].filter(([k]) => k.startsWith('--read-') && k !== '--read-text'))
+    expect(base).toEqual({ '--read-size': '16px', '--read-head': '17px', '--read-title': '20px', '--read-line': '1.75' })
+    expect(varsOf(":root[data-text-size='s']")).toEqual({
+      '--read-size': '15px',
+      '--read-head': '16px',
+      '--read-title': '19px',
+      '--read-line': '1.7',
+    })
+    expect(varsOf(":root[data-text-size='l']")).toEqual({
+      '--read-size': '18px',
+      '--read-head': '19px',
+      '--read-title': '22px',
+      '--read-line': '1.75',
+    })
+  })
+})
+
+describe('差し色とログインの画面はグレー（DS と同じ。docs/SPEC.md の 10.。オレンジは起動アニメーション・アイコン・本文の強調だけ）', () => {
   /** 差し色と、ログインの画面の地・字・ボタンの枠 */
   const GRAY_TOKENS = [
     '--accent',
@@ -335,7 +407,16 @@ describe('部品の書き方', () => {
 
   it('src/ の下の CSS をすべて確かめる（共通・画面ごとの CSS）', () => {
     const names = ALL_CSS.map(([name]) => name)
-    expect(names).toEqual(['features/login/login.css', 'features/top/top.css', 'styles.css', 'ui/layout.css'])
+    expect(names).toEqual([
+      'features/editions/editions.css',
+      'features/login/login.css',
+      'features/top/top.css',
+      'features/topic/topic.css',
+      'styles.css',
+      'ui/layout.css',
+      'ui/menu.css',
+      'ui/sync.css',
+    ])
   })
 
   it.each(ALL_CSS)('%s: 部品は色を直接書かず、変数だけを使う', (_name, source) => {

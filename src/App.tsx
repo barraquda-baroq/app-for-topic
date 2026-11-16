@@ -1,5 +1,7 @@
 // 画面の行き先と外枠。DS の段階0の src/App.tsx から（DS の MIM の行き先を外し、ログインの関所を DS の段階1の形（持ち主だと確かめた
-// アカウントの時だけ画面を出す）にした物）。段階0の行き先はトップ・ログイン・設定の3つ（docs/SPEC.md の 14.5）
+// アカウントの時だけ画面を出す）にした物）。段階0の行き先はトップ・ログイン・設定の3つ（docs/SPEC.md の 14.5）。
+// 段階2で、前の版（#/e/{版の id}。トップと同じ TopPage で開く）・版の一覧（#/editions）・追いつき（#/catch-up）を足し、
+// 話題の詳細を出す所（TopicHost）を外枠に1つだけ置いた（docs/SPEC.md の 9.。設計: 段階2の 1.1・1.9）
 import { lazy, Suspense } from 'react'
 import {
   createHashRouter,
@@ -13,7 +15,8 @@ import {
 import { LoginPage } from './features/login/LoginPage'
 import { startTestAuth } from './features/login/testAuth'
 import { TopPage } from './features/top/TopPage'
-import { paths } from './routes'
+import { TopicHost } from './features/topic/TopicHost'
+import { EDITION_ROUTE, paths } from './routes'
 import { canShowData, useSync } from './sync/controller'
 import { ErrorBoundary, ErrorScreen } from './ui/ErrorBoundary'
 import { AppFrame } from './ui/Layout'
@@ -21,6 +24,8 @@ import { NotFound } from './ui/NotFound'
 
 // 起動を軽くするため、トップ・ログイン以外の画面は開いた時に読み込む（PWA ではオフライン用に事前キャッシュされる）
 const AppSettingsPage = lazy(() => import('./features/appSettings/AppSettingsPage').then((m) => ({ default: m.AppSettingsPage })))
+const EditionsPage = lazy(() => import('./features/editions/EditionsPage').then((m) => ({ default: m.EditionsPage })))
+const CatchUpPage = lazy(() => import('./features/editions/CatchUpPage').then((m) => ({ default: m.CatchUpPage })))
 
 function PageLoading() {
   return (
@@ -51,7 +56,19 @@ function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
   return <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
 }
 
-/** すべての画面の外枠。画面ごとの中身は <Outlet /> に入る */
+/**
+ * 話題の詳細の描画でエラーが起きても、後ろの画面は残す。閉じる（履歴が戻る）・ほかの話題を開く・画面を移ると、もう一度描く
+ * （履歴の項目ごとの key が変わるため）
+ */
+function DetailErrorBoundary({ children }: { children: React.ReactNode }) {
+  const { pathname, key } = useLocation()
+  return <ErrorBoundary resetKey={`${pathname}\n${key}`}>{children}</ErrorBoundary>
+}
+
+/**
+ * すべての画面の外枠。画面ごとの中身は <Outlet /> に入る。話題の詳細（シート・パネル・真ん中の小さな画面）は、画面の後に置いた
+ * TopicHost が履歴の state.sheet を見て出す（画面ごとに置かない。どの画面から開いても同じ所が出す。設計: 段階2の 1.9）
+ */
 function RootLayout() {
   return (
     <AppFrame>
@@ -61,6 +78,9 @@ function RootLayout() {
             <Outlet />
           </Suspense>
         </RouteErrorBoundary>
+        <DetailErrorBoundary>
+          <TopicHost />
+        </DetailErrorBoundary>
       </AuthGate>
     </AppFrame>
   )
@@ -79,6 +99,10 @@ export const routes: RouteObject[] = [
     errorElement: <RootError />,
     children: [
       { path: paths.top(), element: <TopPage /> },
+      // 前の版はトップと同じ画面（TopPage が :editionId を読んで、その版を開く。読めない id は「見つかりません」）
+      { path: EDITION_ROUTE, element: <TopPage /> },
+      { path: paths.editions(), element: <EditionsPage /> },
+      { path: paths.catchUp(), element: <CatchUpPage /> },
       { path: paths.login(), element: <LoginPage /> },
       { path: paths.settings(), element: <AppSettingsPage /> },
       { path: '*', element: <NotFound /> },
@@ -88,6 +112,14 @@ export const routes: RouteObject[] = [
 
 // 画面を離れる前の確認（useBlocker）を後で使えるよう、NS・DS と同じくデータルーターにする
 let router: ReturnType<typeof createHashRouter> | null = null
+
+/**
+ * アプリのルーター（App を描くまでは null）。開発用のフック（src/main.tsx の window.__ts.openTopic）が、今の行き先に詳細の
+ * state.sheet を積むのに使う（部品の外から行き先を動かすため。設計: 段階2の 4.2）
+ */
+export function appRouter(): ReturnType<typeof createHashRouter> | null {
+  return router
+}
 
 export function App() {
   // テストの時だけ: localStorage の topic-studio:test-auth があれば、ログインした状態で開く（開発サーバーだけ。src/features/login/testAuth.ts）
