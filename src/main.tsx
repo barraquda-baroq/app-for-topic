@@ -53,9 +53,15 @@ if (import.meta.env.DEV) {
       opts?.editions ? fakeSignInWithEditions(opts.editions === true ? {} : opts.editions) : fakeSignInForTest(),
     /** 作り物の版を端末に入れる（受け取った物として。送信待ちに積まない。入れた数・いちばん新しい版・場面の id を返す） */
     putFakeEditions: (opts?: TestEditionsOptions) => putFakeEditions(opts),
-    /** 段階1の既読（画面の操作は段階2）: 話題を読んだにする（src/store/devActions.ts。ストアの markRead の結果を返す） */
+    /**
+     * 段階1の既読: 話題を読んだにする（src/store/devActions.ts。ストアの markRead の結果を返す）。画面の操作（詳細を開く）は段階2で作った。
+     * このフックは E2E と見本が場面を作るのに使う
+     */
     markRead: (topicId: string) => markReadTopic(topicId),
-    /** 段階1の「知ってる」（画面の操作は段階2）: 開いている版の話題の用語から、語を「知ってる」にする（ストアの know の結果を返す） */
+    /**
+     * 段階1の「知ってる」: 開いている版の話題の用語から、語を「知ってる」にする（ストアの know の結果を返す）。画面の操作（詳細の［知ってる］）は
+     * 段階2で作った。このフックは E2E と見本が場面を作るのに使う
+     */
     know: (termId: string) => knowTerm(termId),
     /** 段階2の見た版（追いつきの見本・E2E）: 版の一覧を見たにする（ストアの markSeen の結果を返す） */
     markSeen: (editionId: string) => markSeenEdition(editionId),

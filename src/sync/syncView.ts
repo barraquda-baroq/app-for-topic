@@ -109,8 +109,10 @@ export function syncLabel(view: SyncView): string {
 }
 
 /**
- * 幅の狭い画面（S）のヘッダーに出す短い言葉。DS は S でアイコンだけにして小さな窓に詳しい字を出すが、TS の段階1はアイコンも小さな窓も
- * 持たないので、括弧の中を除いた短い字にする（詳しい字は読み上げと title に入れる。src/ui/SyncIndicator.tsx）
+ * 幅の狭い画面（S）のヘッダーに出していた短い言葉（括弧の中を除いた字。段階1の形。docs/SPEC.md の 16.6 の 53）。段階2で、S は DS と
+ * 同じくアイコンだけにし、押すと小窓（src/ui/PopupMenu.tsx）に詳しい字（syncLabel）を出す形にした（■12 の A。src/ui/SyncIndicator.tsx・
+ * docs/SPEC.md の 17.6）ので、今はアプリの画面では使わない。■12 で B（字だけ。S は短い字）に選ばれた時のために残す（見本の B の絵も
+ * これで作る。e2e/samples/shots.ts）
  */
 export function syncShortLabel(view: SyncView): string {
   switch (view.kind) {

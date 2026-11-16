@@ -113,7 +113,7 @@ export interface DevHook {
   fakeSignIn: (opts?: { editions?: TestEditionsOptions | true }) => Promise<TestEditionsResult | null> | undefined
   /** 作り物の版を端末（Dexie）に入れる（受け取った物として。src/features/login/testAuth.ts の putFakeEditions） */
   putFakeEditions: (opts?: TestEditionsOptions) => Promise<TestEditionsResult>
-  /** 段階1の既読: 話題を読んだにする（src/store/devActions.ts。画面の操作は段階2） */
+  /** 段階1の既読: 話題を読んだにする（src/store/devActions.ts。画面の操作（詳細を開く）は段階2で作った。フックは場面を作るのに使う） */
   markRead: (topicId: string) => EditResult<ReadMark>
   /** 段階1の「知ってる」: 開いている版の話題の用語から、語を「知ってる」にする */
   know: (termId: string) => EditResult<KnownTerm>
@@ -196,7 +196,7 @@ export interface OpenTopOptions {
   seen?: readonly string[]
   /**
    * 何が出るまで待つか（来ない物を待って時間切れにならないように、場面ごとに渡す）。既定は、版を入れる時 'newest'、入れない時 'empty'。
-   * 'newest' = 一覧（top-edition。トップの塊の前は段階1の top-headlines）の data-edition-id がいちばん新しい作り物の版になる、
+   * 'newest' = 一覧（top-edition）の data-edition-id がいちばん新しい作り物の版になる、
    * 'shown' = どれかの版が出る（前の版・いちばん新しい版の話題を入れない時）、'empty' = top-empty、'waiting' = top-waiting、
    * { testId } = その testid（#/editions・#/catch-up・#/settings）
    */
@@ -297,8 +297,8 @@ export async function openTop(page: Page, hash = '/', options: OpenTopOptions = 
   }
 
   const wait = options.expect ?? (editions ? 'newest' : 'empty')
-  // 版の一覧の外枠（段階2の top-edition。トップの塊の前は段階1の仮の一覧 top-headlines。どちらも data-edition-id を持つ）
-  const edition = page.locator('[data-testid="top-edition"], [data-testid="top-headlines"]')
+  // 版の一覧の外枠（top-edition。data-edition-id を持つ。段階1の仮の一覧 top-headlines は段階2で無くなった）
+  const edition = page.getByTestId('top-edition')
   if (wait === 'newest') {
     if (!newestEditionId) throw new Error("expect: 'newest' は作り物の版を入れる時だけ使えます")
     await expect(edition).toHaveAttribute('data-edition-id', newestEditionId, { timeout: 15_000 })

@@ -420,8 +420,8 @@ function ready(): boolean {
 
 /**
  * 話題を読んだ・版の一覧を見た（docs/SPEC.md の 7.4 の「既読・見た版 reads」）。topicId が null なら読んだ話題は足さない。opts.seen で
- * 版の一覧を見たにする（戻さない。戻す操作は段階2）。topicIds は重なり無し・30件まで・その版の話題だけ。30日の外の版には付けない
- * （送る前の守りと端末の中の削除で捨てられるため）。変わらない時は書かない
+ * 版の一覧を見たにする（戻さない。戻す操作は作らない。docs/SPEC.md の 17.4・見本の ■13）。topicIds は重なり無し・30件まで・
+ * その版の話題だけ。30日の外の版には付けない（送る前の守りと端末の中の削除で捨てられるため）。変わらない時は書かない
  */
 export function markRead(editionId: string, topicId: string | null, opts: { seen?: boolean } = {}): EditResult<ReadMark> {
   if (!ready()) return { ok: false, reason: 'not-ready' }

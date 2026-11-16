@@ -328,7 +328,7 @@ export function repairEmphasis(topic: unknown, raw: unknown = isObj(topic) ? top
   return out
 }
 
-// ---------- 画面用（段階2の本文の強調。見た目は段階2で決める） ----------
+// ---------- 画面用（段階2の本文の強調。見た目は A のオレンジの文字＋太字で、色の値は src/styles.css の --emphasis。docs/SPEC.md の 17.） ----------
 
 /** 欄の文の区切り（strong = 強調の所） */
 export interface EmphasisSegment {

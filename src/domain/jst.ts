@@ -105,7 +105,7 @@ export function slotTimeMs(date: string, slot: Slot): number {
 /**
  * その時刻までに、時刻の上で出ているはずのいちばん新しい枠（日本時間）。20:00 から次の 12:00 の前までは 20:00版、12:00 から 20:00 の前までは
  * その日の 12:00版（0時から 12:00 の前は、前の日の 20:00版）。版も作れなかった印も無い時に「まだ届いていません」の類を出すかを決める物
- * （言葉・何分後かは段階2。docs/SPEC.md の 7.2）
+ * （言葉と30分は段階2で決めた。src/domain/editionStatus.ts の NOT_ARRIVED_AFTER_MIN。docs/SPEC.md の 7.2・17.6 の 7）
  */
 export function latestSlotAt(ms: number): { date: string; slot: Slot } {
   const p = jstParts(ms)

@@ -434,10 +434,10 @@ describe('部品の書き方', () => {
     expect(css).toContain(`@media (max-width: ${WIDTH_L - 1}px), (pointer: coarse)`)
   })
 
-  // ヘッダーの名前を出さない 380px 未満（docs/SPEC.md の 14.5）だけは、幅の区分とは別の値
-  const HEADER_NAME_MAX = 379
-  it.each(ALL_CSS)('%s: 幅の値は幅の区分（WIDTH_M・WIDTH_L）か、ヘッダーの名前を隠す 380px 未満だけ', (_name, source) => {
-    const allowed = new Set([WIDTH_M - 1, WIDTH_M, WIDTH_L - 1, WIDTH_L, HEADER_NAME_MAX])
+  // 段階0・1はヘッダーの名前を出さない 380px 未満（379px）も許していたが、段階2で名前を隠す幅を S（600px 未満。幅の区分の 599px）に
+  // したので、幅の区分のほかの値は無い（docs/SPEC.md の 14.5・17.6）
+  it.each(ALL_CSS)('%s: 幅の値は幅の区分（WIDTH_M・WIDTH_L）だけ', (_name, source) => {
+    const allowed = new Set([WIDTH_M - 1, WIDTH_M, WIDTH_L - 1, WIDTH_L])
     const widths = [...stripComments(source).matchAll(/\((?:max|min)-width:\s*(\d+)px\)/g)].map((m) => Number(m[1]))
     for (const w of widths) expect(allowed.has(w), `${w}px`).toBe(true)
   })

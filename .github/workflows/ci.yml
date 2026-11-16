@@ -1,7 +1,7 @@
 name: CI
 
 # 型の確かめ・整形の確かめ・端末の印の確かめ・単体テスト・持ち主の関所とアクセスルールと同期のテスト（Firebase エミュレーター）・ビルド・
-# ビルドにテスト用の入口と作り物の版が無いことの確かめ・E2E（docs/SPEC.md の 14.7・16.3）。DS の .github/workflows/ci.yml から、WebKit の
+# ビルドにテスト用の入口と作り物の版が無いことの確かめ・E2E（docs/SPEC.md の 14.7・16.3・17.3）。DS の .github/workflows/ci.yml から、WebKit の
 # 調べ（webkit-diag）を外した物。持ち主の関所と同期の E2E（エミュレーターにつないだ開発サーバー）は、別の仕事 e2e-sync で test と同時に流す。
 # 段階1の test:sync は src/**/*.emu.test.ts（持ち主の関所・アクセスルール・2台の同期・段階0からの上がり）、test:e2e:sync は
 # e2e/*.sync.spec.ts（持ち主の関所・作り物の版の受け取りと2つのブラウザの既読・知ってる）。どちらも設定のファイルの名前の形で拾うので、
@@ -34,7 +34,8 @@ jobs:
       # ここで止める（e2e/check-tags.mjs。テストを並べるだけで、ブラウザも開発サーバーも使わない）
       - name: E2E のテストの端末の印の確かめ
         run: npm run e2e:tags
-      # src/ の単体テストと、scripts/ のテスト（vite.config.ts の埋め込み・manifest・アイコン・書体のライセンス、公開の前の確かめ）
+      # src/ の単体テストと、scripts/ のテスト（vite.config.ts の埋め込み・manifest・アイコン・書体のライセンス、公開の前の確かめ、エミュレーターに
+      # 入れる道具、段階2の見本の道具（案・見本のページ・撮る物の一覧））
       - name: 単体テスト
         run: npm test
       # Firebase エミュレーター（firebase-tools 15）は Java 21 以上が要る（ランナーの既定は 17）。DS の ci.yml と同じ形
@@ -108,7 +109,7 @@ jobs:
 
   # 持ち主の関所と同期の E2E（docs/SPEC.md の 14.4・14.7・16.3）。Firebase エミュレーターにつないだ開発サーバーで、記録が無い時・
   # 別のアカウント・まだ持ち主だと確かめていないアカウントで電波が無い時（e2e/owner-gate.sync.spec.ts）と、エミュレーターに入れる道具
-  # （npm run seed:emu）で入れた作り物の版がトップの仮の一覧に出る事・2つのブラウザで既読と「知ってる」が移る事（e2e/data.sync.spec.ts）を
+  # （npm run seed:emu）で入れた作り物の版がトップに出る事・2つのブラウザで既読と「知ってる」が移る事（e2e/data.sync.spec.ts）を
   # Chromium で流す（playwright.sync.config.ts。開発サーバーだけの VITE_E2E_OWNER_LOCK=1 で、エミュレーターでも本番と同じに持ち主を
   # 確かめる）。test の仕事と同時に流す
   e2e-sync:

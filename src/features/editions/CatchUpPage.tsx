@@ -12,7 +12,7 @@
 //   続報のつながりのもっと新しい話題が端末にある時（並べた後に threadsOf で引く。設計: 段階2の 1.16）
 // - L も1列（page-narrow）。列の差し込み口（PanelSlot）が無いので、詳細は L でも真ん中の小さな画面（TopicHost が TopicSheet を出す。
 //   side は null。DS の 3.8 と同じ。設計: 段階2の 1.9）
-// - 0本なら「追いつく版はありません」、下に「見た版は、ここに出なくなります」
+// - 0本なら「追いつく版はありません」だけ。並べた時は、話題の下に「見た版は、ここに出なくなります」
 // testid catch-up-page の data-edition-ids（決めた追いつく版の id。新しい順・空白で区切る。決める前は無い）と aria-busy は、E2E と
 // 見本が「決め終えた」を待つための物（CSS では選ばない）。props・オブジェクトの鍵に know・markRead・markSeen を使わない（16.6 の 59）
 import { useCallback, useEffect, useState, type JSX } from 'react'
