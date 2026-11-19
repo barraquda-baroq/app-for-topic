@@ -1,6 +1,6 @@
 {
   // エミュレーターの結合テスト（Node）。アプリの同期のエンジン（ブラウザの型を使う）も読み込むので DOM の型で確かめる
-  // （NS の connector/tsconfig.emu.json を写した物。テストは B3 以降で test/emu に足す）
+  // （NS の connector/tsconfig.emu.json を写した物。テストは test/emu の *.emu.test.ts と、その道具の test/emu/harness.ts）
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.emu.tsbuildinfo",
     "target": "ES2022",

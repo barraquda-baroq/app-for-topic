@@ -154,7 +154,9 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('版が無い時・待つ間（段階0・1の文のまま）', () => {
+// 版が1つも無い時は状態の1行を出さない（空の画面の文 = 届く時刻の案内で足りる。最初の版が届く前の日に「まだ届いていません」を並べない。
+// docs/SPEC.md の 17.6 の 7。空の時の文は段階3で替えた。段階3の設計の 3.2・3.3）
+describe('版が無い時・待つ間', () => {
   it.each(Object.entries(TEST_WIDTHS))(
     '%s: 版が無い時は「まだ版はありません」と届く時期だけ（状態の1行・帯は出さない）',
     (_w, width) => {
@@ -165,7 +167,7 @@ describe('版が無い時・待つ間（段階0・1の文のまま）', () => {
       const top = screen.getByTestId('top-page')
       expect(within(top).getByTestId('top-empty').textContent).toBe(EMPTY_TITLE + EMPTY_NOTE)
       expect(EMPTY_TITLE).toBe('まだ版はありません')
-      expect(EMPTY_NOTE).toBe('12:00版と20:00版は、段階3から届くようになります。')
+      expect(EMPTY_NOTE).toBe('12:00版と20:00版が、ここに届きます。')
       expect(screen.queryByTestId('top-edition')).toBeNull()
       expect(screen.queryByTestId('edition-status')).toBeNull()
       expect(screen.queryByTestId('catch-up-band')).toBeNull()
@@ -189,7 +191,7 @@ describe('版が無い時・待つ間（段階0・1の文のまま）', () => {
     expect(screen.queryByTestId('catch-up-band')).toBeNull()
   })
 
-  // 版の記録が新しい形の物だけ（出せる版が無い）の時は、届いているのに「まだ版はありません」「段階3から届く」と言わず、アプリの更新が
+  // 版の記録が新しい形の物だけ（出せる版が無い）の時は、届いているのに「まだ版はありません」「ここに届きます」と言わず、アプリの更新が
   // 要る事を状態の1行で言う（設計: 段階2の 1.7 の 0. と 3.・1.21）
   it.each(Object.entries(TEST_WIDTHS))(
     '%s: 版の記録が新しい形の物だけの時は「まだ版はありません」を出さず、「12:00版は新しい形の記録です（アプリを更新してください）」',

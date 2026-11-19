@@ -2,16 +2,19 @@
 // 見解なし（理由つき・理由なし）と知らない kind・AI のジャンルの注記・共通の注記は見解と対立見解がある時だけ・訂正は見出しの上に足した順・
 // 確かめられなかった点はたたむ・開いた時に知ってる語を出さない・元記事のリンクと文・照合の件数・順位の理由・書いた AI・強調と用語の印・
 // 説明の箱（段落のすぐ下・1度に1つ・Esc は箱だけ閉じてシートの onClose を呼ばない・フォーカスは語へ戻る）・前の話題と続報あり。
-// 話題は作り物の版（src/test/fixtures/fakeEditions.ts）を表示用の写しにした物（中身はすべて作り物）
+// 段階3で、出典の区切りの見出し（「出典」。Q19 のあわせて）・出典の1本ごとの出典の表示の文（credit の社だけ。リンクにしない）・
+// CC BY の社を出典に持つ話題だけの頭の1行（元記事と著者・元記事へのリンク）を足した（段階3の設計の 3.4）。
+// 話題は作り物の版（src/test/fixtures/fakeEditions.ts）を表示用の写しにした物（中身はすべて作り物。社は src/test/fixtures/fakeOutlets.ts）
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { useState, type JSX } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { creditText } from '../../domain/credit'
 import { FIXED_TEXTS } from '../../domain/fixedTexts'
 import { repairTopic, type ShownCorrection, type ShownTopic } from '../../domain/repair'
 import { detailTextFields, findTermHits } from '../../domain/termMarks'
 import type { ThreadTopic } from '../../store/appStore'
 import { FAKE_TOPIC_SCENES, makeFakeEdition, makeFakeMonth } from '../../test/fixtures/fakeEditions'
-import { FAKE_OUTLETS } from '../../test/fixtures/fakeOutlets'
+import { FAKE_CREDIT_OUTLETS, FAKE_OUTLETS } from '../../test/fixtures/fakeOutlets'
 import { Modal } from '../../ui/Modal'
 import { DETAIL_HEADS, KNOWN_TEXTS, unverifiedText } from './detailTexts'
 import { TopicDetail, type TopicDetailProps } from './TopicDetail'
@@ -78,7 +81,7 @@ function orderOf(root: HTMLElement, texts: string[]): number[] {
 }
 
 describe('並び（設計: 段階2の 1.10）', () => {
-  it('訂正 → 見出し → 結論 → 要約 → だから何？ → 当事者 → 見解・共通の注記 → 経緯 → 確かめられなかった点 → 用語 → 元記事 → 下の細い字', () => {
+  it('訂正 → 見出し → 結論 → 要約 → だから何？ → 当事者 → 見解・共通の注記 → 経緯 → 確かめられなかった点 → 用語 → 出典 → 下の細い字', () => {
     const topic = topicAt(FAKE_TOPIC_SCENES.jpRulingParty)
     render(<Detail topic={topic} corrections={[correction(topic, '一つ目の訂正の文', 1)]} />)
     const root = screen.getByTestId('topic-detail')
@@ -226,7 +229,7 @@ describe('決まった文と、出さない区切り（docs/SPEC.md の 7.1 の�
   })
 })
 
-describe('元記事と下の細い字', () => {
+describe('出典と下の細い字', () => {
   it('リンクにする出典だけ <a>（新しいタブ・noopener noreferrer）。一覧に無い社の URL は文で出す', () => {
     const topic = topicAt(FAKE_TOPIC_SCENES.newerValues)
     render(<Detail topic={topic} />)
@@ -441,5 +444,91 @@ describe('続報（設計: 段階2の 1.16）', () => {
     cleanup()
     render(<Detail topic={chain[2]} thread={[thread[2]]} />)
     expect(screen.queryByRole('button', { name: /^前の話題:/ })).toBeNull()
+  })
+})
+
+describe('出典の表示（段階3。段階3の設計の 3.4）', () => {
+  /** 作り物の版の話題の出典を、出典の書き方のある作り物の社に替えた物 */
+  const withSources = (sources: Record<string, unknown>[], rank = 4) =>
+    shownTopic({
+      ...EDITION.topics[rank - 1],
+      sources: sources.map((x, i) => ({
+        title: `作り物の発表${i + 1}`,
+        url: `https://example.com/press/${i + 1}`,
+        publishedAt: '2026-11-15T09:30+09:00',
+        publishedNote: null,
+        via: null,
+        ...x,
+      })),
+    })
+
+  it('区切りの見出しは「出典」（段階2までは「元記事」）', () => {
+    expect(DETAIL_HEADS.sources).toBe('出典')
+    render(<Detail topic={topicAt(4)} />)
+    expect(document.querySelector('.topic-sources .topic-section-head')?.textContent).toBe('出典')
+  })
+
+  it('出典の書き方のある社だけ、リンクと日時の下に出典の表示の文（選べる文で、中の URL はリンクにしない）', () => {
+    const topic = withSources([
+      { outlet: FAKE_CREDIT_OUTLETS.site },
+      { outlet: FAKE_CREDIT_OUTLETS.title },
+      { outlet: FAKE_CREDIT_OUTLETS.noLink },
+      { outlet: '〇〇通信' },
+    ])
+    render(<Detail topic={topic} outlets={FAKE_OUTLETS} />)
+    const rows = [...document.querySelectorAll<HTMLElement>('.topic-source')]
+    expect(rows).toHaveLength(4)
+    const credits = rows.map((r) => r.querySelector('[data-testid="topic-credit"]')?.textContent ?? null)
+    expect(credits).toEqual([
+      creditText(topic.sources[0], FAKE_OUTLETS),
+      creditText(topic.sources[1], FAKE_OUTLETS),
+      creditText(topic.sources[2], FAKE_OUTLETS),
+      null,
+    ])
+    expect(credits[0]).toContain('出典：〇〇省ホームページ（https://example.com/press/1）を加工して作成')
+    expect(credits[1]).toContain('出典：「作り物の発表2」（△△庁）')
+    // 出典の表示の文はリンクにしない（リンクは上の行。リンクにしない社（〇〇協会）は URL も文）
+    for (const r of rows) expect(r.querySelector('[data-testid="topic-credit"] a')).toBeNull()
+    expect(rows[0].querySelector('a.topic-source-link')).toBeTruthy()
+    expect(rows[2].querySelector('a')).toBeNull()
+    expect(rows[2].querySelector('.topic-url')?.textContent).toBe('https://example.com/press/3')
+    // 出典の表示の文は日時の行の後ろ
+    const meta = rows[0].querySelector('.topic-source-meta')!
+    const credit = rows[0].querySelector('[data-testid="topic-credit"]')!
+    expect(meta.compareDocumentPosition(credit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 府省・庁の話題には、頭の1行を出さない
+    expect(screen.queryByTestId('topic-credit-head')).toBeNull()
+  })
+
+  it('CC BY の社を出典に持つ話題だけ、見出しの下に元記事と著者の1行と、元記事へのリンク（新しいタブ）', () => {
+    const topic = withSources(
+      [
+        { outlet: FAKE_CREDIT_OUTLETS.ccBy, title: '作り物の記事', author: 'FAKE_作り物の著者' },
+        { outlet: FAKE_CREDIT_OUTLETS.site },
+      ],
+      9,
+    )
+    render(<Detail topic={topic} outlets={FAKE_OUTLETS} />)
+    const head = screen.getByTestId('topic-credit-head')
+    expect(head.querySelector('.topic-credit-head-text')?.textContent).toBe(
+      'この話題は、□□ボイス「作り物の記事」（著者: FAKE_作り物の著者）を元に、Topic Studio（AI による要約）が要約・翻訳しました',
+    )
+    const link = head.querySelector('a')!
+    expect(link.textContent).toBe('元記事: □□ボイス「作り物の記事」')
+    expect(link.getAttribute('href')).toBe('https://example.com/press/1')
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+    // 見出しのすぐ下
+    const h3 = screen.getByRole('heading', { level: 3 })
+    expect(h3.nextElementSibling).toBe(head)
+    // 出典の区切りにも、□□ボイスの出典の表示の文（著者とライセンス）がある
+    expect(document.querySelector('.topic-sources')?.textContent).toContain('（著者: FAKE_作り物の著者）')
+  })
+
+  it('一覧を渡さなければふだんの一覧で引く（作り物の社には出典の書き方が無いので、出典の表示も頭の1行も出ない）', () => {
+    const topic = withSources([{ outlet: FAKE_CREDIT_OUTLETS.ccBy, author: 'FAKE_甲' }, { outlet: FAKE_CREDIT_OUTLETS.site }])
+    render(<Detail topic={topic} />)
+    expect(screen.queryAllByTestId('topic-credit')).toHaveLength(0)
+    expect(screen.queryByTestId('topic-credit-head')).toBeNull()
   })
 })

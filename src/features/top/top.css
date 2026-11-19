@@ -124,6 +124,12 @@
   color: var(--text-muted);
 }
 
+/* L の国内・世界の列に話題が1本も無い版の、見出しの下の1行（段階3の設計の 3.4。見出しの下の間をカードの頭とそろえる） */
+.top-section-empty {
+  margin: var(--sp-3) 0 0;
+  line-height: 1.6;
+}
+
 .top-cards {
   margin: 0;
   padding: 0;

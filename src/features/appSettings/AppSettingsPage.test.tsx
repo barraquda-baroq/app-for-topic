@@ -1,15 +1,22 @@
 // 設定の画面（docs/SPEC.md の 14.5。DS の src/features/appSettings/AppSettingsPage.test.tsx から）: 「表示」「アカウント」
 // 「ホーム画面に追加」「このアプリについて」を出す。［‹ 戻る］の行き来と、ログアウトでログインの画面へ戻ること。
-// 段階2で、「表示」の下に「『知ってる』にした語」を足した（設計: 段階2の 1.23）。同期の区切りは作らない（■12 の C）
-import { cleanup, render, screen, within } from '@testing-library/react'
+// 段階2で、「表示」の下に「『知ってる』にした語」を足した（設計: 段階2の 1.23）。同期の区切りは作らない（■12 の C）。
+// 段階3で、その下に「Claude との連携」を足した（段階3の設計の 3.1。中身は src/features/claude/ClaudeSettings.test.tsx）。
+// 連携の記録を読む所（src/features/claude/connectorDoc.ts）は差し替える（テストからクラウドへ出ない）
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { routes } from '../../App'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_PREFS, usePrefs } from '../../store/uiStore'
-import { fakeSignInForTest, resetSyncForTests } from '../../sync/controller'
+import { fakeSignInForTest, resetSyncForTests, useSync } from '../../sync/controller'
 import { setTestWidth, TEST_WIDTHS } from '../../test/width'
+import type { ConnectorState } from '../claude/connectorDoc'
 import { FONT_LICENSE_URL, FONT_NOTICE } from './AppSettingsPage'
+
+const conn = vi.hoisted(() => ({ watchConnector: vi.fn() }))
+vi.mock('../claude/connectorDoc', () => ({ watchConnector: conn.watchConnector }))
+
+const { routes } = await import('../../App')
 
 // テストでは node:fs の型がアプリの tsconfig に無いので、名前を変数にして読み込む（src/styles.test.ts と同じ）
 const NODE_FS = 'node:fs'
@@ -25,6 +32,11 @@ function renderAt(path: string) {
 }
 
 beforeEach(() => {
+  conn.watchConnector.mockReset()
+  conn.watchConnector.mockImplementation((fn: (s: ConnectorState) => void) => {
+    fn({ state: 'none' })
+    return () => {}
+  })
   localStorage.clear()
   usePrefs.setState(DEFAULT_PREFS)
   resetSyncForTests()
@@ -37,7 +49,7 @@ afterEach(() => {
 })
 
 describe('AppSettingsPage', () => {
-  it('「表示」「『知ってる』にした語」「アカウント」「ホーム画面に追加」「このアプリについて」をこの順に出す（同期の区切りは無い）', async () => {
+  it('「表示」「『知ってる』にした語」「Claude との連携」「アカウント」「ホーム画面に追加」「このアプリについて」をこの順に出す（同期の区切りは無い）', async () => {
     renderAt('/settings')
     const page = await screen.findByTestId('app-settings')
     const titles = within(page)
@@ -46,6 +58,7 @@ describe('AppSettingsPage', () => {
     expect(titles).toEqual([
       '表示',
       '「知ってる」にした語',
+      'Claude との連携',
       'アカウント',
       'ホーム画面に追加（アプリとして使う）',
       'このアプリについて',
@@ -55,6 +68,21 @@ describe('AppSettingsPage', () => {
     expect(screen.getByTestId('account-email').textContent).toBe('me@example.com')
     expect(screen.getByTestId('app-header')).toBeTruthy()
     expect(document.title).toBe('設定 — Topic Studio')
+  })
+
+  it('「Claude との連携」: コネクタの場所がビルドに無い時は「まだ用意されていません」と手順書へのリンク。同期が動き始めたら連携の状態を読む', async () => {
+    renderAt('/settings')
+    const claude = await screen.findByTestId('claude-settings')
+    // Firebase を使わずにログインした状態（同期のエンジンが動かない）では、連携の状態を読まない
+    expect(within(claude).getByTestId('claude-pairing-loading')).toBeTruthy()
+    expect(conn.watchConnector).not.toHaveBeenCalled()
+    act(() => useSync.setState({ status: { phase: 'synced', pending: 0, lastSyncedAt: 1, error: null } }))
+    expect(within(claude).getByTestId('claude-connector-unset').textContent).toBe(
+      'コネクタはまだ用意されていません（docs/CONNECTOR.md）',
+    )
+    expect(within(claude).getByTestId('claude-guide').getAttribute('href')).toMatch(/\/docs\/CONNECTOR\.md$/)
+    expect(await within(claude).findByTestId('claude-pairing-none')).toBeTruthy()
+    expect(conn.watchConnector).toHaveBeenCalledTimes(1)
   })
 
   it('「ホーム画面に追加」は追加の手順（枠付き。iPhone・Android・パソコン）', async () => {

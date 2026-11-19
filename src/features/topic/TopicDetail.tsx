@@ -1,8 +1,9 @@
 // 話題の詳細の中身（docs/SPEC.md の 9. の「詳細」。S・M の下からのシートと L のパネルで同じ物。設計: 段階2の 1.10〜1.17）。
-// 並び（9. の「だから何？→ 当事者の主張 → AI の見解 → 対立見解 → 共通の注記 → 用語 → 元記事」を骨にして、書いていない欄の場所を決めた。
+// 並び（9. の「だから何？→ 当事者の主張 → AI の見解 → 対立見解 → 共通の注記 → 用語 → 出典」を骨にして、書いていない欄の場所を決めた。
 // 上は「何が起きたか」、下は「確かめる材料」。開発。設計: 段階2の 1.10）:
-//   頭の行（重大・続報）→ 訂正（足した順。見出しの上）→ 見出し → 結論 → 要約 → 続報（何が新しいか・経緯・前の話題）→ 続報あり →
-//   だから何？ → 当事者の主張 → AI の見解と対立見解・共通の注記 → 経緯（続報でない時）→ 確かめられなかった点 → 用語 → 元記事 →
+//   頭の行（重大・続報）→ 訂正（足した順。見出しの上）→ 見出し →（CC BY の出典の話題だけ、元記事と著者の1行）→ 結論 → 要約 →
+//   続報（何が新しいか・経緯・前の話題）→ 続報あり → だから何？ → 当事者の主張 → AI の見解と対立見解・共通の注記 →
+//   経緯（続報でない時）→ 確かめられなかった点 → 用語 → 出典（段階2までの言葉は「元記事」）→
 //   下の細い字（照合の件数・順位の理由・書いた AI）
 // 版の行（「11/15（日）12:00版・国内・経済」）は、シートの題・パネルの頭に出す（上に固定されるので。ここでは繰り返さない）。
 // 本文の強調は <strong class="emph">（作者の答え A）、本文の中の用語の印は点線のボタン（■2 の A。src/features/topic/RichText.tsx）。
@@ -11,7 +12,12 @@
 // 先に動いてシートごと閉じる。React はシートの portal の先で受けるので、document の Modal・パネルの Esc まで届かない。設計: 段階2の 2.）。
 // フォーカスが中身の外（シートの下の帯・パネルの頭の行の［クリップ］、本文の字を押した後の body）にある時は、ここでは受けられないので、
 // 箱を閉じる関数を noteCloser で渡し、シート（Modal）とパネルが Esc で閉じる前に呼ぶ（箱が開いていれば箱だけを閉じて止める）。
-// 記録の文は文のまま出す（HTML として読まない。4.6）。props の名前に know・markRead・markSeen を使わない（16.6 の 59）
+// 記録の文は文のまま出す（HTML として読まない。4.6）。props の名前に know・markRead・markSeen を使わない（16.6 の 59）。
+// 段階3で、出典の区切りの見出しを「出典」に替え（Q19 のあわせて）、出典の1本ごとにリンクと日時の下へ出典の表示の文（「出典：〇〇省
+// ホームページ（https://…）を加工して作成（加工: …）」など。src/domain/credit.ts の creditText。選べる文で、中の URL はリンクにしない）を
+// 小さな字で出し、CC BY の社（Global Voices）を出典に持つ話題だけ、見出しの下に元記事と著者の1行と元記事へのリンクを出すようにした
+// （creditHeadText。Global Voices の帰属の決まり。府省・庁の話題は出典の区切りの表示だけ。段階3の設計の 3.4 の 3.）。
+// 出典の書き方を引く社の一覧は outlets（既定はふだんの一覧。作り物の版では作り物の一覧を渡す）
 import {
   useEffect,
   useId,
@@ -24,6 +30,7 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from 'react'
+import { creditHeadText, creditText } from '../../domain/credit'
 import {
   asOfText,
   BREAKING_LABEL,
@@ -33,6 +40,7 @@ import {
   stanceLabel,
   timelineWhenText,
 } from '../../domain/fixedTexts'
+import { DEFAULT_OUTLETS, type OutletDirectory } from '../../domain/outlets'
 import type { ShownCorrection, ShownTopic } from '../../domain/repair'
 import { detailTextFields, findTermHits, type TermHit } from '../../domain/termMarks'
 import type { TopicTerm } from '../../domain/types'
@@ -42,6 +50,7 @@ import { testIds } from '../top/testIds'
 import { CARD_TEXTS, editionNameOfId } from '../top/texts'
 import {
   checkText,
+  creditHeadLinkText,
   DETAIL_HEADS,
   FOLLOW_UP_PREFIX,
   NEWER_TOPIC_PREFIX,
@@ -79,6 +88,8 @@ export interface TopicDetailProps {
    * Esc で閉じる前に呼ぶ（フォーカスが中身の外にあって、根の onKeyDown が受けられない時のため）
    */
   noteCloser?: MutableRefObject<(() => boolean) | null>
+  /** 出典の書き方を引く社の一覧（既定はふだんの一覧。作り物の版では作り物の一覧） */
+  outlets?: OutletDirectory
 }
 
 const NONE: readonly never[] = []
@@ -117,6 +128,7 @@ export function TopicDetail({
   thread,
   onOpenTopic,
   noteCloser,
+  outlets = DEFAULT_OUTLETS,
 }: TopicDetailProps): JSX.Element {
   const rootRef = useRef<HTMLElement>(null)
   const titleRef = useRef<HTMLHeadingElement>(null)
@@ -231,6 +243,8 @@ export function TopicDetail({
   const conclusionLabel = conclusionLabelText(topic.conclusion.label)
   const { prev, newer } = threadLinks(topic, thread)
   const view = topic.view
+  // CC BY の社を出典に持つ話題の、頭の1行（府省・庁だけの話題は null）
+  const creditHead = useMemo(() => creditHeadText(topic.sources, outlets), [topic, outlets])
 
   return (
     <article
@@ -261,6 +275,26 @@ export function TopicDetail({
       <h3 ref={titleRef} className="topic-title" tabIndex={-1}>
         {topic.headline}
       </h3>
+
+      {creditHead ? (
+        <div className="topic-credit-head" data-testid="topic-credit-head">
+          <p className="topic-credit-head-text">{creditHead.text}</p>
+          {creditHead.links.map((l, i) =>
+            l.link ? (
+              <a key={i} className="topic-credit-head-link" href={l.link} target="_blank" rel="noopener noreferrer">
+                <span className="topic-source-label">
+                  {creditHeadLinkText(l.outlet, l.title)}
+                  <ExternalLinkIcon small />
+                </span>
+              </a>
+            ) : (
+              <p key={i} className="topic-credit-head-link">
+                {creditHeadLinkText(l.outlet, l.title)}（<span className="topic-url">{l.url}</span>）
+              </p>
+            ),
+          )}
+        </div>
+      ) : null}
 
       {conclusionLabel || topic.conclusion.breaking || topic.conclusion.note ? (
         <div className="topic-conclusion">
@@ -403,6 +437,7 @@ export function TopicDetail({
           <ul className="topic-list">
             {topic.sources.map((s, i) => {
               const name = `${s.outlet}「${s.title}」`
+              const credit = creditText(s, outlets)
               return (
                 <li key={i} className="topic-source">
                   {s.link ? (
@@ -421,6 +456,11 @@ export function TopicDetail({
                     {s.via ? viaText(s.via) : ''}
                   </span>
                   {!s.link && s.url ? <span className="topic-url">{s.url}</span> : null}
+                  {credit ? (
+                    <span className="topic-credit" data-testid="topic-credit">
+                      {credit}
+                    </span>
+                  ) : null}
                 </li>
               )
             })}

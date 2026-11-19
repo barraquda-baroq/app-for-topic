@@ -89,7 +89,7 @@ describe('Firebase の待ちに上限', () => {
     const started = Date.now()
     const r = await within(core.callTool('topic_unknown', {}, { grant }), 3_000, 'Firestore が答えない時のツールの呼び出し')
     expect(Date.now() - started).toBeLessThan(1_000)
-    // 振り分けまで届く（ツールは B3 以降。知らないツールの答え）。頭に今の時刻
+    // 振り分けまで届く（知らないツールの名前で、中身は動かさない。知らないツールの答え）。頭に今の時刻
     expect(r.isError).toBe(true)
     expect(r.auth).toBeUndefined()
     expect(r.text).toMatch(/^いま \d{2}:\d{2}（日本時間）\n知らないツールです/)

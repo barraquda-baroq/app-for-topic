@@ -553,6 +553,11 @@ export function setTopicOutlets(dir: OutletDirectory = DEFAULT_OUTLETS): void {
   scheduleViewRefresh()
 }
 
+/** 今の社の一覧（詳細の出典の表示とクリップの出典の行が、作り物の版の時も同じ一覧で出典の書き方を引く。本番は DEFAULT_OUTLETS） */
+export function topicOutlets(): OutletDirectory {
+  return outlets
+}
+
 /** 欠けた話題をクラウドから直接読む関数（同期を受け持つタブの司令塔が、エンジンの fetchTopics を渡す。受け持たない時は null） */
 export type TopicFetcher = (ids: readonly string[]) => Promise<{ found: string[]; missing: string[] }>
 let fetcher: TopicFetcher | null = null

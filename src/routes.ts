@@ -1,7 +1,9 @@
 // 画面の行き先（HashRouter を使うので静的ホスティングでもそのまま動く。docs/SPEC.md の 3.・14.5）。DS の段階0の src/routes.ts から、
 // DS の MIM・カレンダーの行き先を外した物。段階0はトップ・ログイン・設定の3つ。段階2で、前の版・版の一覧・追いつきの3つを足した
 // （docs/SPEC.md の 9.）。話題の詳細は行き先にせず、開いている画面の履歴の state に積む（src/features/topic/sheets.ts。
-// 行き先にすると、移るたびに一覧が先頭へ戻り作り直されるため。DS と同じ。開発。設計: 段階2）
+// 行き先にすると、移るたびに一覧が先頭へ戻り作り直されるため。DS と同じ。開発。設計: 段階2）。段階3で、Claude 用のコネクタとの
+// 連携の画面（#/claude/connect?s=…。コネクタが開く。src/claude/pairing.ts の CONNECT_ROUTE と同じ）を足した（段階3の設計の 3.1）
+import { CONNECT_ROUTE } from './claude/pairing'
 
 export const paths = {
   /** トップ（いちばん新しい出せる版に付いていく。docs/SPEC.md の 9.） */
@@ -16,6 +18,11 @@ export const paths = {
   login: () => '/login',
   /** 設定（別のページ。docs/SPEC.md の 14.5） */
   settings: () => '/settings',
+  /**
+   * Claude 用のコネクタとの連携の画面（コネクタの同意の画面の後に `?s=<連携の印>` を付けて開かれる。持ち主と確かめた後だけ開ける。
+   * docs/SPEC.md の 7.7・段階3の設計の 3.1）
+   */
+  claudeConnect: () => CONNECT_ROUTE,
 }
 
 /** 前の版の行き先の形（src/App.tsx の routes。:editionId を useParams で読む） */

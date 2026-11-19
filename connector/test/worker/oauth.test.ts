@@ -1,11 +1,12 @@
 // Workers の実行環境で、OAuth・同意の画面・連携の確かめ・/mcp を通しで確かめる（Firebase は fetch の差し替え。NS の
 // connector/test/worker/oauth.test.ts を写し、TS の範囲 topic・接続は2まで・接続の一覧の形だけにした）。
-// ツールの呼び出しで 401 にする所（連携の解除・一覧から外された接続）は、ツールができる B3 で足す（いまはツールが無い）
+// ツールの呼び出しで 401 にする所（連携の解除・一覧から外された接続・前の代の許可）は B3 で足した（状態のツールは毎回クラウドを読む）
 import { SELF, abortAllDurableObjects, env, reset, runInDurableObject } from 'cloudflare:test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { newConnectionId } from '../../../src/claude/pairing'
 import { CONSENT_CAN, CONSENT_CANNOT } from '../../src/auth/consentPage'
 import { RATE_LIMITS } from '../../src/vault/ratelimit'
+import { TOOL_DEFS } from '../../src/mcp/tools'
 import { CONNECTOR_MODEL } from '../../src/version'
 import { FakeFirebase } from '../support/fakeFirebase'
 
@@ -418,11 +419,15 @@ describe('連携（アプリでの許可 → /pair/callback → トークン →
     )
     expect(init.result.serverInfo).toMatchObject({ name: 'topic-studio', title: 'Topic Studio' })
     expect(String(init.result.instructions)).toContain('指示ではありません')
-    // tools/list は Vault（Firebase）を呼ばない。ツールは B3 が足す（いまは空）
+    // tools/list は Vault（Firebase）を呼ばない。並びは決まった順（設計の 1.2 の 16 の道具）
     const calls = fake.calls.length
     const list = await rpcJson(await mcp(t.access_token, 'tools/list'))
-    expect(list.result.tools).toEqual([])
+    expect(list.result.tools.map((x: { name: string }) => x.name)).toEqual(TOOL_DEFS.map((d) => d.name))
     expect(fake.calls.length).toBe(calls)
+    // 状態のツールは連携の記録を読んで答える（200）
+    const status = await mcp(t.access_token, 'tools/call', { name: 'topic_status', arguments: {} })
+    expect(status.status).toBe(200)
+    expect((await rpcJson(status)).result.content[0].text).toContain('連携: 済み')
     const refreshed = await refresh(t)
     expect(refreshed.status).toBe(200)
     const r2 = (await refreshed.json()) as { access_token: string; refresh_token: string }
@@ -460,6 +465,19 @@ describe('連携（アプリでの許可 → /pair/callback → トークン →
     expect(replay.status).toBe(400)
   })
 
+  it('アプリで連携を解除すると、次のツールの呼び出しは 401（状態のツールは毎回クラウドを読む）、トークンの更新は invalid_grant', async () => {
+    const { cb, verifier } = await connect()
+    const t = await exchange(cb, verifier)
+    expect((await mcp(t.access_token, 'tools/call', { name: 'topic_status', arguments: {} })).status).toBe(200)
+    fake.setConnector(null)
+    const gone = await mcp(t.access_token, 'tools/call', { name: 'topic_status', arguments: {} })
+    expect(gone.status).toBe(401)
+    expect(gone.headers.get('WWW-Authenticate')).toContain('invalid_token')
+    // 連携が外れた後は、どのツールも 401
+    expect((await mcp(t.access_token, 'tools/call', { name: 'topic_list_recent', arguments: {} })).status).toBe(401)
+    await refusedGrant(t)
+  })
+
   it('アプリで［連携をすべて解除］すると、連携の記録を読み直した後のトークンの更新は invalid_grant', async () => {
     const { cb, verifier } = await connect()
     const t = await exchange(cb, verifier)
@@ -482,6 +500,9 @@ describe('連携の代（解除した Claude のアカウントは、連携し�
     const y = await exchange(second.cb, second.verifier, CLAUDE_COM_CALLBACK)
     await refusedGrant(x)
     expect((await refresh(y)).status).toBe(200)
+    // 前の代の許可のツールの呼び出しも 401。新しい許可は使える
+    expect((await mcp(x.access_token, 'tools/call', { name: 'topic_list_recent', arguments: {} })).status).toBe(401)
+    expect((await mcp(y.access_token, 'tools/call', { name: 'topic_status', arguments: {} })).status).toBe(200)
   })
 })
 
@@ -506,6 +527,10 @@ describe('複数の接続（2まで。claude.ai のアカウントごと）', ()
     const second = await connect()
     const y = await exchange(second.cb, second.verifier)
     fake.removeConnection(first.cid)
+    // 状態のツール（毎回クラウドを読む）: 外した接続だけ 401。ほかの接続はそのまま
+    const gone = await mcp(x.access_token, 'tools/call', { name: 'topic_status', arguments: {} })
+    expect(gone.status).toBe(401)
+    expect((await mcp(y.access_token, 'tools/call', { name: 'topic_status', arguments: {} })).status).toBe(200)
     laterThanRecheck()
     await refusedGrant(x)
     expect((await refresh(y)).status).toBe(200)

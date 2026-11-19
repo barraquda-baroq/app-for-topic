@@ -1,10 +1,12 @@
 // ［クリップ］の文（src/domain/clipText.ts。D10・docs/SPEC.md の 7.6・9.。作者の答え A。設計: 段階2の 1.14）: 作り物の鎖の1本目
 // （訂正1件・◇◇日報を××ニュースで読んだ出典）で 9. の例と同じ形の文を1字も違わずに作る・訂正なし・2件（足した順）・知らない地域と
-// ジャンル・読んだ所あり・リンクにならない URL も入る・強調と用語の印が入らない・だから何？が入らない・日付と曜日（月・年の境）
+// ジャンル・読んだ所あり・リンクにならない URL も入る・強調と用語の印が入らない・だから何？が入らない・日付と曜日（月・年の境）。
+// 段階3で、段の頭を「出典:」に替え（Q19 のあわせて）、出典の書き方のある社は URL の行の代わりに出典の表示の行（段階3の設計の 3.4 の 4.）
 import { describe, expect, it } from 'vitest'
 import { CHAIN_CORRECTION_TEXT, FAKE_TOPIC_SCENES, makeFakeMonth } from '../test/fixtures/fakeEditions'
-import { FAKE_OUTLETS } from '../test/fixtures/fakeOutlets'
+import { FAKE_CREDIT_OUTLETS, FAKE_OUTLETS } from '../test/fixtures/fakeOutlets'
 import { CLIP_SOURCES_HEAD, clipEditionLine, clipText } from './clipText'
+import { CREDIT_PROCESSOR, CC_BY_3_NAME, CC_BY_3_URL } from './credit'
 import { correctionsByTopic } from './editionShow'
 import { publishedAtText } from './fixedTexts'
 import { repairCorrection, repairTopic, type ShownCorrection, type ShownTopic } from './repair'
@@ -25,7 +27,11 @@ const correctionsOf = (topicId: string): ShownCorrection[] => {
 }
 
 describe('clipText（クリップの文）', () => {
-  it('鎖の1本目: 見出し・版の行・空行・要約・空行・訂正・空行・元記事（社「題」（…で読んだ）と URL）', () => {
+  it('段の頭は「出典:」（段階3で「元記事:」から替えた）', () => {
+    expect(CLIP_SOURCES_HEAD).toBe('出典:')
+  })
+
+  it('鎖の1本目: 見出し・版の行・空行・要約・空行・訂正・空行・出典（社「題」（…で読んだ）と URL）', () => {
     const topic = shown(month.scenes.chain[0])
     const corrections = correctionsOf(topic.id)
     expect(corrections.map((c) => c.text)).toEqual([CHAIN_CORRECTION_TEXT])
@@ -38,7 +44,7 @@ describe('clipText（クリップの文）', () => {
         '',
         '訂正: 新しい橋の歩道の幅は 2メートルではなく 3メートルでした',
         '',
-        '元記事:',
+        '出典:',
         '〇〇通信「〇〇市の新しい橋が開通」',
         'https://example.com/news/2026-11-13-12/14-1',
         '◇◇日報「新しい橋が開通 渋滞2割減の見通し」（××ニュースで読んだ）',
@@ -85,8 +91,46 @@ describe('clipText（クリップの文）', () => {
       ],
     })
     expect(text.split('\n\n').at(-1)).toBe(
-      ['元記事:', '〇〇通信「題1」', '△△新聞「題2」', '□□放送「題3」', 'https://example.com/c'].join('\n'),
+      ['出典:', '〇〇通信「題1」', '△△新聞「題2」', '□□放送「題3」', 'https://example.com/c'].join('\n'),
     )
+  })
+
+  it('出典の書き方のある社は、URL の行の代わりに出典の表示の行（URL を含む）。credit の無い社は今のまま URL の行', () => {
+    const topic = shown(month.scenes.chain[0])
+    const P = CREDIT_PROCESSOR
+    const sources = [
+      { outlet: FAKE_CREDIT_OUTLETS.site, title: '作り物の発表1', url: 'https://example.com/p/1', via: null },
+      { outlet: FAKE_CREDIT_OUTLETS.title, title: '作り物の発表2', url: 'https://example.com/p/2', via: null },
+      {
+        outlet: FAKE_CREDIT_OUTLETS.ccBy,
+        title: '作り物の記事',
+        url: 'https://example.com/p/3',
+        via: null,
+        author: 'FAKE_作り物の著者',
+      },
+      { outlet: '〇〇通信', title: '題4', url: 'https://example.com/p/4', via: null },
+    ]
+    const text = clipText({ ...topic, sources }, [], FAKE_OUTLETS)
+    expect(text.split('\n\n').at(-1)).toBe(
+      [
+        '出典:',
+        '〇〇省「作り物の発表1」',
+        `出典：〇〇省ホームページ（https://example.com/p/1）を加工して作成（加工: ${P}）`,
+        '△△庁「作り物の発表2」',
+        `出典：「作り物の発表2」（△△庁）（https://example.com/p/2）を加工して作成（加工: ${P}）`,
+        '□□ボイス「作り物の記事」',
+        `出典：□□ボイス「作り物の記事」（著者: FAKE_作り物の著者）（https://example.com/p/3）、${CC_BY_3_NAME}（${CC_BY_3_URL}）。${P}が要約・翻訳した`,
+        '〇〇通信「題4」',
+        'https://example.com/p/4',
+      ].join('\n'),
+    )
+    // 一覧を渡さなければ、ふだんの一覧で引く（作り物の社には出典の書き方が無いので、URL の行のまま）
+    expect(
+      clipText({ ...topic, sources })
+        .split('\n\n')
+        .at(-1)
+        ?.split('\n')[2],
+    ).toBe('https://example.com/p/1')
   })
 
   it('強調・用語の印は付けない。だから何？・当事者・見解・経緯・出典の日時は入れない', () => {
@@ -118,7 +162,7 @@ describe('clipText（クリップの文）', () => {
     expect(line('broken')).toBe('国内・経済')
   })
 
-  it('作り物のどの話題でも、見出しで始まり、元記事の段で終わる（行の終わりは \\n）', () => {
+  it('作り物のどの話題でも、見出しで始まり、出典の段で終わる（行の終わりは \\n）', () => {
     for (const ed of month.editions)
       for (const raw of ed.topics) {
         const topic = shown(raw.id)

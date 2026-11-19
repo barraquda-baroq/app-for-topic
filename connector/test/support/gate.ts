@@ -32,7 +32,7 @@ interface Rule {
   pass?: boolean
 }
 
-/** 差分の読み取りのページ（updated の順の問い合わせ。写しは B3 以降） */
+/** 差分の読み取りのページ（updated の順の問い合わせ。写しの差分。vault/mirror.ts） */
 export const syncPage = (r: SentRequest) => r.op === 'runQuery' && r.body.includes('"orderBy"')
 /** 名前を指定した読み取り（config/owner・config/connector・meta/app） */
 export const batchGet = (r: SentRequest) => r.op === 'batchGet'

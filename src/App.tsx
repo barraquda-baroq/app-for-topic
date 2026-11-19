@@ -1,7 +1,10 @@
 // 画面の行き先と外枠。DS の段階0の src/App.tsx から（DS の MIM の行き先を外し、ログインの関所を DS の段階1の形（持ち主だと確かめた
 // アカウントの時だけ画面を出す）にした物）。段階0の行き先はトップ・ログイン・設定の3つ（docs/SPEC.md の 14.5）。
 // 段階2で、前の版（#/e/{版の id}。トップと同じ TopPage で開く）・版の一覧（#/editions）・追いつき（#/catch-up）を足し、
-// 話題の詳細を出す所（TopicHost）を外枠に1つだけ置いた（docs/SPEC.md の 9.。設計: 段階2の 1.1・1.9）
+// 話題の詳細を出す所（TopicHost）を外枠に1つだけ置いた（docs/SPEC.md の 9.。設計: 段階2の 1.1・1.9）。
+// 段階3で、Claude 用のコネクタとの連携の画面（#/claude/connect?s=…）を、開いた時に読み込む画面として関所の中に足した（持ち主と
+// 確かめた後だけ開ける。TS の config/owner はアプリから作れない。ログインしていなければログインの画面へ移り、ログインの後に戻る。
+// 段階3の設計の 3.1）
 import { lazy, Suspense } from 'react'
 import {
   createHashRouter,
@@ -12,6 +15,7 @@ import {
   useRouteError,
   type RouteObject,
 } from 'react-router-dom'
+import { peekConnectReturn, rememberConnectReturn } from './features/claude/connectReturn'
 import { LoginPage } from './features/login/LoginPage'
 import { startTestAuth } from './features/login/testAuth'
 import { TopPage } from './features/top/TopPage'
@@ -26,6 +30,7 @@ import { NotFound } from './ui/NotFound'
 const AppSettingsPage = lazy(() => import('./features/appSettings/AppSettingsPage').then((m) => ({ default: m.AppSettingsPage })))
 const EditionsPage = lazy(() => import('./features/editions/EditionsPage').then((m) => ({ default: m.EditionsPage })))
 const CatchUpPage = lazy(() => import('./features/editions/CatchUpPage').then((m) => ({ default: m.CatchUpPage })))
+const ConnectPage = lazy(() => import('./features/claude/ConnectPage').then((m) => ({ default: m.ConnectPage })))
 
 function PageLoading() {
   return (
@@ -38,15 +43,20 @@ function PageLoading() {
 /**
  * ログインと持ち主の関所（docs/SPEC.md の 14.4）: ログインしていない間・この端末で持ち主だと確かめていない間は、ログインの画面だけを
  * 出す（トップ・設定の画面を出さない。まだ確かめていない・持ち主でない時は、ログインの画面に文と［ログアウト］を出す）。
- * 確かめたらログインの画面からトップへ。ログインの状態を確かめている間は「読み込み中…」（起動アニメーションの下）
+ * 確かめたらログインの画面からトップへ。ログインの状態を確かめている間は「読み込み中…」（起動アニメーションの下）。
+ * 連携の画面（#/claude/connect?s=…）からログインの画面へ移る時は、その行き先をこのタブに覚え、確かめた後にトップでなく連携の画面へ戻す
+ * （src/features/claude/connectReturn.ts。覚えた物は連携の画面が開いた時に消す）
  */
 function AuthGate({ children }: { children: React.ReactNode }) {
   const auth = useSync((s) => s.auth)
   const show = useSync(canShowData)
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
   if (auth === 'idle' || auth === 'checking') return <PageLoading />
-  if (!show && pathname !== paths.login()) return <Navigate to={paths.login()} replace />
-  if (show && pathname === paths.login()) return <Navigate to={paths.top()} replace />
+  if (!show && pathname !== paths.login()) {
+    if (pathname === paths.claudeConnect()) rememberConnectReturn(`${pathname}${search}`)
+    return <Navigate to={paths.login()} replace />
+  }
+  if (show && pathname === paths.login()) return <Navigate to={peekConnectReturn() ?? paths.top()} replace />
   return <>{children}</>
 }
 
@@ -105,6 +115,7 @@ export const routes: RouteObject[] = [
       { path: paths.catchUp(), element: <CatchUpPage /> },
       { path: paths.login(), element: <LoginPage /> },
       { path: paths.settings(), element: <AppSettingsPage /> },
+      { path: paths.claudeConnect(), element: <ConnectPage /> },
       { path: '*', element: <NotFound /> },
     ],
   },

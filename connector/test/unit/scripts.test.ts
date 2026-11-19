@@ -33,8 +33,7 @@ describe('wrangler.jsonc の変数', () => {
       .filter((f) => f.endsWith('.ts') && !f.endsWith('config.ts'))
       .map((f) => fs.readFileSync(path.join(connectorDir, 'src', f), 'utf8'))
       .join('\n')
-    // 1回の呼び出しで調べる本文の字数（workBudgetChars）は、写し・候補集めの部品（B3 以降）が使う
-    for (const key of keys.filter((k) => k !== 'workBudgetChars')) expect(files, key).toMatch(new RegExp(`\\.${key}\\b`))
+    for (const key of keys) expect(files, key).toMatch(new RegExp(`\\.${key}\\b`))
   })
 })
 

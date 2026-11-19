@@ -4,7 +4,9 @@
 // - makeFakeMonth({ until, days }): 何日分かの版。続報の鎖・作れなかった枠・時期で変わる語・訂正を含める（訂正も返す）
 // - fakeRecordsOf: 記録を、コネクタが足す順（辞書の束 → 話題 → 版。作った時刻の順）に並べる（エミュレーターに入れる道具・偽のクラウド用）
 // - makeFakeMonth の extras（段階2の画面の見本と E2E の場面。設計: 段階2の 5.3）: 強調した語句そのものを正す訂正・いちばん新しい枠の
-//   作れなかった印・新しい形の話題・新しい形の版。既定は何も足さない（今のテスト・エミュレーターに入れる道具・同期の E2E の id と数を変えない）
+//   作れなかった印・新しい形の話題・新しい形の版。既定は何も足さない（今のテスト・エミュレーターに入れる道具・同期の E2E の id と数を変えない）。
+//   段階3で、いちばん新しい版の世界の話題を除く場面（noWorld）と、出典を出典の書き方のある作り物の社に替える場面（creditSources）を
+//   足した（段階3の設計の 3.4。FAKE_MONTH_STAGE3_EXTRAS）
 // 返すのは記録（docs/SPEC.md の 7.1〜7.3 の型）。外側の文書（RecordDoc）は src/sync/codec.ts で作る（ここでは作らない）。
 // id は src/domain/ids.ts で、段階3のコネクタと同じ作り方で作る（話題は中身の指紋、版は枠、訂正は話題の id と文の指紋）。
 // 乱数は種から作り、Math.random・Date.now を使わない（同じ種からは同じ物。テストと段階2の画面の見本で同じ作り物を使うため）。
@@ -41,7 +43,7 @@ import {
   type TopicTerm,
   type ViewSection,
 } from '../../domain/types'
-import { FAKE_UNLISTED_OUTLET } from './fakeOutlets'
+import { FAKE_CREDIT_OUTLETS, FAKE_UNLISTED_OUTLET } from './fakeOutlets'
 
 /** 作り物の記録の model（書いたモデル）と、照合の係の model（作り物の名前。本物のモデルの名前を使わない） */
 export const FAKE_MODEL = 'fake-writer-model'
@@ -1765,7 +1767,23 @@ export interface FakeMonthOptions {
  * newerTopic・newerEdition の記録は、送る直前の確かめ（checkTopic・checkEdition）の「v は 1」で断られる（アプリより新しいコネクタの記録の見本）
  */
 export const FAKE_MONTH_EXTRAS = ['correctsEmphasis', 'failsNext', 'newerTopic', 'newerEdition'] as const
-export type FakeMonthExtra = (typeof FAKE_MONTH_EXTRAS)[number]
+
+/**
+ * 段階3で足した場面（段階3の設計の 3.4。E2E の作り物の版）。どれも、いちばん新しい版だけを替える（ほかの版・作れなかった印・訂正は同じ）:
+ * - noWorld: いちばん新しい版の世界の話題を除く（版の order からも。国内の話題だけの版。今の出どころでは世界の話題がほとんど入らない）。
+ *   除いた話題を指す訂正は、話題の無い訂正として残る（アプリは出さない）
+ * - creditSources: いちばん新しい版の4位（国内）の出典を、出典の書き方のある作り物の社（〇〇省・△△庁・〇〇協会）に、13位（世界）の出典を
+ *   CC BY の作り物の社（□□ボイス。著者つき）に替える（中身が替わるので id を作り直し、版の order と場面の id も替える。outletNames は
+ *   出典の社だけ。段階3の設計の 1.5）
+ */
+export const FAKE_MONTH_STAGE3_EXTRAS = ['noWorld', 'creditSources'] as const
+export type FakeMonthExtra = (typeof FAKE_MONTH_EXTRAS)[number] | (typeof FAKE_MONTH_STAGE3_EXTRAS)[number]
+
+/** extras の creditSources の作り物の著者（□□ボイスの出典の author） */
+export const FAKE_CREDIT_AUTHOR = 'FAKE_作り物の著者'
+/** extras の creditSources が出典を替える、いちばん新しい版の話題の順位（国内の府省・庁の出典・世界の CC BY の出典） */
+export const CREDIT_PRESS_RANK = 4
+export const CREDIT_CC_BY_RANK = 13
 
 /** 足した場面の id（extras を渡した物だけ） */
 export interface FakeMonthExtraScenes {
@@ -1777,6 +1795,10 @@ export interface FakeMonthExtraScenes {
   newerTopic?: string
   /** newerEdition: v: 2 にした版の id */
   newerEdition?: string
+  /** noWorld: 世界の話題を除いた版の id と、除いた話題の id */
+  noWorld?: { editionId: string; removed: string[] }
+  /** creditSources: 出典を替えた話題の id（府省・庁の出典の話題・CC BY の出典の話題） */
+  creditSources?: { pressTopicId: string; ccByTopicId: string }
 }
 
 export interface FakeMonthScenes {
@@ -1981,7 +2003,8 @@ export function makeFakeMonth(opts: FakeMonthOptions): FakeMonth {
   const { until, days, seed = 'fake-month', untilSlot = '20' } = opts
   const extras = new Set<FakeMonthExtra>(opts.extras ?? [])
   for (const x of extras)
-    if (!(FAKE_MONTH_EXTRAS as readonly string[]).includes(x)) throw new RangeError(`知らない extras です（${String(x)}）`)
+    if (![...FAKE_MONTH_EXTRAS, ...FAKE_MONTH_STAGE3_EXTRAS].includes(x))
+      throw new RangeError(`知らない extras です（${String(x)}）`)
   if (!isYmd(until)) throw new RangeError(`until は 'YYYY-MM-DD' にしてください（${until}）`)
   if (!Number.isInteger(days) || days < 3) throw new RangeError(`days は3以上の整数にしてください（${days}）`)
   const slots: { date: string; slot: Slot }[] = []
@@ -2137,6 +2160,38 @@ export function makeFakeMonth(opts: FakeMonthOptions): FakeMonth {
     newest.edition = { ...newest.edition, v: 2 } as unknown as Edition
     extraScenes.newerEdition = newest.edition.id
   }
+  if (extras.has('creditSources')) {
+    const url = (rank: number, i: number) => `${FAKE_URL_PREFIX}press/${newest.edition.id}/${pad2(rank)}-${i + 1}`
+    const press = replaceSources(newest, CREDIT_PRESS_RANK, (t) =>
+      [FAKE_CREDIT_OUTLETS.site, FAKE_CREDIT_OUTLETS.title, FAKE_CREDIT_OUTLETS.noLink].map((outlet, i) => ({
+        outlet,
+        title: `${t.headline.slice(0, 20)}（作り物の発表${i + 1}）`,
+        url: url(CREDIT_PRESS_RANK, i),
+        publishedAt: t.sources[0]?.publishedAt ?? null,
+        publishedNote: null,
+        via: null,
+      })),
+    )
+    const ccBy = replaceSources(newest, CREDIT_CC_BY_RANK, (t) => [
+      {
+        outlet: FAKE_CREDIT_OUTLETS.ccBy,
+        title: `${t.headline.slice(0, 20)}（作り物の記事）`,
+        url: url(CREDIT_CC_BY_RANK, 0),
+        publishedAt: t.sources[0]?.publishedAt ?? null,
+        publishedNote: null,
+        via: null,
+        author: FAKE_CREDIT_AUTHOR,
+      },
+    ])
+    extraScenes.creditSources = { pressTopicId: press, ccByTopicId: ccBy }
+  }
+  if (extras.has('noWorld')) {
+    const removed = newest.topics.filter((t) => t.region === 'world').map((t) => t.id)
+    const gone = new Set(removed)
+    newest.topics = newest.topics.filter((t) => !gone.has(t.id))
+    newest.edition = { ...newest.edition, order: newest.edition.order.filter((id) => !gone.has(id)) }
+    extraScenes.noWorld = { editionId: newest.edition.id, removed }
+  }
   return {
     editions,
     editionFails,
@@ -2149,6 +2204,24 @@ export function makeFakeMonth(opts: FakeMonthOptions): FakeMonth {
       ...(extras.size ? { extras: extraScenes } : {}),
     },
   }
+}
+
+/**
+ * 版のその順位の話題の出典を替える（extras の creditSources。中身が替わるので id を作り直し、threadId（続報でない話題は自分の id）・
+ * 版の order・その版の場面の id も替える。outletNames は出典の社だけ）。新しい id を返す
+ */
+function replaceSources(ed: FakeEdition, rank: number, sourcesOf: (t: Topic) => Source[]): string {
+  const i = rank - 1
+  const before = ed.topics[i]
+  if (before.followUp) throw new Error(`作り物の版 ${ed.edition.id} の${rank}位は続報です（出典を替えると鎖が切れる）`)
+  const sources = sourcesOf(before)
+  const t: Topic = { ...before, id: '', threadId: '', sources, outletNames: [...new Set(sources.map((s) => s.outlet))] }
+  t.id = topicIdOf(t)
+  t.threadId = t.id
+  ed.topics[i] = t
+  ed.edition = { ...ed.edition, order: ed.edition.order.map((id) => (id === before.id ? t.id : id)) }
+  for (const [scene, id] of Object.entries(ed.scenes)) if (id === before.id) ed.scenes[scene as FakeTopicScene] = t.id
+  return t.id
 }
 
 /** 続報の鎖の話題を置く順位（国内・経済の14位） */

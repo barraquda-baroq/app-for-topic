@@ -1,6 +1,7 @@
 // Vault の Durable Object（SQLite）。中身は core.ts の VaultCore。Worker からは RPC で呼ぶ（NS の connector/src/vault/Vault.ts を写した物）。
 // 持ち主ごとに1つ（idFromName('owner')、locationHint 'apac'）。alarm は1つの DO に1つだけなので、やる事（候補集めの続き・決まりの読み・
-// 気象庁の見張り・回の期限）は B3 以降で VaultCore の表に持ち、いちばん早い物の時刻に置き直す（設計の 1.1 の「DO の殻」）
+// 気象庁の見張り・回の期限・写しの続き）は VaultCore のやる事の表（store.ts の tasks。鍵は runs.ts）に持ち、いちばん早い物の時刻に
+// 置き直す（設計の 1.1 の「DO の殻」）
 import { DurableObject } from 'cloudflare:workers'
 import { vaultConfig, type Env } from '../env'
 import { logError } from '../log'

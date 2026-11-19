@@ -3,14 +3,17 @@
 // （side を渡さないので、L も真ん中の小さな画面。L の列に重ねるパネルは、塊をまたぐ e2e/flows.spec.ts）。
 // S・M は下からのシート。［×］・Esc・戻るで閉じる・読み込み直すと開き直す・強調（.emph の数が作り物の強調と同じ）・用語の印を押すと
 // 説明の箱・箱の中の Esc で箱だけ閉じる・［知ってる］→［取り消す］→閉じても記録が変わらない・［知ってる］→閉じると記録が付き、
-// 開き直すと語が出ない・訂正が見出しの上に足した順・前の話題へのリンク（履歴を増やさない）・元記事のリンクの数（◇◇日報の URL は文）・
-// 長い話題をシートの中だけで下まで送れる。作り物の版はテストの側でも同じ作り方で作って比べる（中身はすべて作り物）
+// 開き直すと語が出ない・訂正が見出しの上に足した順・前の話題へのリンク（履歴を増やさない）・出典のリンクの数（◇◇日報の URL は文）・
+// 長い話題をシートの中だけで下まで送れる。作り物の版はテストの側でも同じ作り方で作って比べる（中身はすべて作り物）。
+// 段階3で、出典の区切りの見出し（「出典」）・出典の表示の文と CC BY の出典の話題の頭の1行（作り物の社の credit。作り物の版の extras の
+// creditSources）・カードの「出典: …（nか所）」を足した（段階3の設計の 3.4・7. の「E2E（Firebase なし）」）
 import { expect, test, type Page } from '@playwright/test'
+import { creditText } from '../src/domain/credit'
 import { repairTopic, type ShownTopic } from '../src/domain/repair'
 import { detailTextFields, findTermHits, hitsOf, richSegments } from '../src/domain/termMarks'
-import { FAKE_TOPIC_SCENES, makeFakeMonth, type FakeMonth } from '../src/test/fixtures/fakeEditions'
+import { FAKE_CREDIT_AUTHOR, FAKE_TOPIC_SCENES, makeFakeMonth, type FakeMonth } from '../src/test/fixtures/fakeEditions'
 import { FAKE_OUTLETS } from '../src/test/fixtures/fakeOutlets'
-import { collectDiagnosticsOnFailure, noHorizontalScroll, openTop, type OpenTopOptions } from './helpers'
+import { cardOf, collectDiagnosticsOnFailure, noHorizontalScroll, openTop, type OpenTopOptions } from './helpers'
 
 collectDiagnosticsOnFailure()
 
@@ -231,11 +234,12 @@ test.describe('詳細のシート（作り物の版・Firebase 無し）', { tag
     expect(await sheetInHistory(page)).toBeNull()
   })
 
-  test('元記事: リンクにする出典だけ新しいタブのリンク、一覧に無い社（◇◇日報）の URL は文で出す', async ({ page }) => {
+  test('出典: リンクにする出典だけ新しいタブのリンク、一覧に無い社（◇◇日報）の URL は文で出す', async ({ page }) => {
     const { newest } = await openForDetail(page)
     const topic = shown(newest.topics[FAKE_TOPIC_SCENES.newerValues - 1])
     const detail = await openDetail(page, topic.id)
     const sources = detail.locator('.topic-sources')
+    await expect(sources.locator('.topic-section-head')).toHaveText('出典')
     const linked = topic.sources.filter((s) => s.link)
     expect(linked.length).toBeGreaterThan(0)
     await expect(sources.locator('a')).toHaveCount(linked.length)
@@ -248,6 +252,53 @@ test.describe('詳細のシート（作り物の版・Firebase 無し）', { tag
     const plain = topic.sources.find((s) => !s.link)!
     expect(plain.outlet).toBe('◇◇日報')
     await expect(sources.locator('.topic-url')).toHaveText([plain.url])
+    await noHorizontalScroll(page)
+  })
+})
+
+test.describe('出典の表示（段階3。作り物の社の credit・Firebase 無し）', { tag: ['@pc', '@s'] }, () => {
+  test('カードは「出典: 〇〇省・△△庁 ほか（3か所）」（出典にした所の数）', async ({ page }) => {
+    const r = await openTop(page, '/', { editions: { extras: ['creditSources'] } })
+    const month = makeFakeMonth(r.editions!)
+    const press = topicOf(month, month.scenes.extras!.creditSources!.pressTopicId)
+    await expect(cardOf(page, press.id).locator('.top-card-foot')).toContainText('出典: 〇〇省・△△庁 ほか（3か所）')
+  })
+
+  test('府省・庁の出典は、リンクと日時の下に出典の表示の文（リンクにしない）。リンクにしない社（〇〇協会）は URL も文', async ({
+    page,
+  }) => {
+    const { month } = await openForDetail(page, { editions: { extras: ['creditSources'] } })
+    const press = topicOf(month, month.scenes.extras!.creditSources!.pressTopicId)
+    const detail = await openDetail(page, press.id)
+    const rows = detail.locator('.topic-source')
+    await expect(rows).toHaveCount(3)
+    for (const [i, s] of press.sources.entries()) {
+      const credit = creditText(s, FAKE_OUTLETS)!
+      expect(credit).toContain('を加工して作成（加工: Topic Studio（AI による要約））')
+      await expect(rows.nth(i).getByTestId('topic-credit')).toHaveText(credit)
+      await expect(rows.nth(i).getByTestId('topic-credit').locator('a')).toHaveCount(0)
+    }
+    // 〇〇協会はリンクにしない（URL は文）
+    await expect(rows.nth(2).locator('a')).toHaveCount(0)
+    await expect(rows.nth(2).locator('.topic-url')).toHaveText(press.sources[2].url)
+    // 府省・庁の話題には頭の1行を出さない
+    await expect(detail.getByTestId('topic-credit-head')).toHaveCount(0)
+    await noHorizontalScroll(page)
+  })
+
+  test('CC BY の出典（□□ボイス）の話題だけ、見出しの下に元記事と著者の1行と元記事へのリンク', async ({ page }) => {
+    const { month } = await openForDetail(page, { editions: { extras: ['creditSources'] } })
+    const ccBy = topicOf(month, month.scenes.extras!.creditSources!.ccByTopicId)
+    const detail = await openDetail(page, ccBy.id)
+    const head = detail.getByTestId('topic-credit-head')
+    await expect(head).toContainText(
+      `この話題は、□□ボイス「${ccBy.sources[0].title}」（著者: ${FAKE_CREDIT_AUTHOR}）を元に、Topic Studio（AI による要約）が要約・翻訳しました`,
+    )
+    const link = head.getByRole('link')
+    await expect(link).toHaveText(`元記事: □□ボイス「${ccBy.sources[0].title}」`)
+    await expect(link).toHaveAttribute('href', ccBy.sources[0].url)
+    await expect(link).toHaveAttribute('target', '_blank')
+    await expect(detail.getByTestId('topic-credit')).toHaveText(creditText(ccBy.sources[0], FAKE_OUTLETS)!)
     await noHorizontalScroll(page)
   })
 })

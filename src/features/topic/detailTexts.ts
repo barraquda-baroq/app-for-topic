@@ -1,8 +1,10 @@
 // 話題の詳細だけの画面の言葉（docs/SPEC.md の 9. の「詳細」・7.6 のクリップ・5.8 の「知ってる」）。詳細の部品（src/features/topic）が
 // 同じ言葉を使うので、1か所に置く（開発。設計: 段階2の 1.10・1.13・1.14）。記録の決まった値の言葉と決まった文（「この話題では特になし」
 // など。docs/SPEC.md の 7.1）は src/domain/fixedTexts.ts、カードと共通の印（「重大」「続報」）は src/features/top/texts.ts にあり、
-// ここでは足さない。言葉の直しは、ここの文だけを替える
-import { aiLabel } from '../../domain/fixedTexts'
+// ここでは足さない。言葉の直しは、ここの文だけを替える。
+// 段階3で、出典の区切りの見出しを「元記事」から「出典」に替え（言葉は src/domain/fixedTexts.ts の SOURCE_WORDS。Q19 のあわせての A）、
+// CC BY の出典（Global Voices）の話題の頭の1行の、元記事へのリンクの言葉を足した（段階3の設計の 3.4）
+import { aiLabel, SOURCE_WORDS } from '../../domain/fixedTexts'
 
 /** 区切りの見出し（詳細の中の並び。設計: 段階2の 1.10） */
 export const DETAIL_HEADS = {
@@ -11,7 +13,7 @@ export const DETAIL_HEADS = {
   view: 'AI の見解と対立見解',
   timeline: '経緯',
   terms: '用語',
-  sources: '元記事',
+  sources: SOURCE_WORDS.sources,
 } as const
 
 /** だから何？の4つの観点の小見出し（docs/SPEC.md の 5.4。並びもこの順） */
@@ -46,6 +48,14 @@ export const NEWER_TOPIC_PREFIX = 'この話題には続報があります:'
 /** 前の話題・続報へのリンクの文（「{見出し}（{版}）」。版の名前が分からなければ見出しだけ） */
 export function threadLinkText(headline: string, editionName: string | null): string {
   return editionName ? `${headline}（${editionName}）` : headline
+}
+
+/**
+ * CC BY の出典の話題の頭の1行の後ろの、元記事へのリンクの文（「元記事: □□ボイス「題」」。Global Voices の帰属の決まり「元記事への
+ * リンクと著者の名前を記事の頭に」。1行の文は src/domain/credit.ts の creditHeadText。段階3の設計の 3.4）
+ */
+export function creditHeadLinkText(outlet: string, title: string): string {
+  return `元記事: ${outlet}「${title}」`
 }
 
 /** 出典の読んだ所（「（××ニュースで読んだ）」。docs/SPEC.md の 5.10・7.6） */

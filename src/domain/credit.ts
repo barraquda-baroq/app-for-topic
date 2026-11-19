@@ -45,8 +45,8 @@ const authorOf = (s: CreditSource): string | null => {
 
 /**
  * 出典の表示の文（社の credit の5つの形から。credit の無い社・一覧に無い社は null）。例（作り物）:
- * - site: 出典：〇〇省ホームページ（https://example.com/…）を加工して作成（加工: Topic Studio（AI による要約））
- * - cc-by: 出典：□□ボイス「題」（著者: 名前）（https://example.com/…）、CC BY 3.0（…）。Topic Studio（AI による要約）が要約・翻訳した
+ * - site: 出典：（社）ホームページ（https://example.com/…）を加工して作成（加工: Topic Studio（AI による要約））
+ * - cc-by: 出典：（社）「題」（著者: 名前）（https://example.com/…）、CC BY 3.0（…）。Topic Studio（AI による要約）が要約・翻訳した
  * cc-by で著者が無い時は「著者: 不明」と書かず、著者の括弧ごと書かない
  */
 export function creditText(source: CreditSource, dir: OutletDirectory = DEFAULT_OUTLETS): string | null {
@@ -80,7 +80,7 @@ export interface CreditHead {
 
 /**
  * CC BY の社（credit が cc-by）を出典に持つ話題の、詳細の頭の1行（Global Voices の帰属の決まり「訳したり再掲したりする時は、元記事への
- * リンクと著者の名前を記事の頭に」。段階3の設計の 3.4）。例（作り物）: 「この話題は、□□ボイス「題」（著者: 名前）を元に、
+ * リンクと著者の名前を記事の頭に」。段階3の設計の 3.4）。例（作り物）: 「この話題は、（社）「題」（著者: 名前）を元に、
  * Topic Studio（AI による要約）が要約・翻訳しました」。cc-by の出典が無い話題は null（府省の話題は、出典の段の表示だけ）
  */
 export function creditHeadText(sources: readonly CreditSource[], dir: OutletDirectory = DEFAULT_OUTLETS): CreditHead | null {

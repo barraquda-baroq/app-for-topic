@@ -3,7 +3,7 @@
 // - 文書は名前の順・updated（サーバー時刻）の順に並ぶ。1回の commit の書き込みはすべて同じ時刻
 // - アクセスルールの要点だけをまねる: コネクタ（config/connector の uid）は records のうち読ませる表（CLAUDE_READ_TABLES）だけを読め、
 //   決まった5つの表（CONNECTOR_TABLES）に作るだけ（writes の時だけ。json は表ごとの上限まで）。private は読めない
-// 本物のアクセスルールとの合わせは、エミュレーターの結合テスト（test/emu。B3 以降）で確かめる。
+// 本物のアクセスルールとの合わせは、エミュレーターの結合テスト（test/emu の mirror.emu.test.ts など）で確かめる。
 // URL のホストは作り物（fake-auth・fake-fs。Workers のテストは fake-firebase）で、外へは出ない（test/support/netGuard.ts）。
 import { MAX_CONNECTIONS } from '../../../src/claude/pairing'
 import { RECORD_LIMITS } from '../../../src/domain/limits'
@@ -381,6 +381,22 @@ export class FakeFirebase {
       if (tables) list = list.filter((d) => tables.includes(String(d.fields.table?.stringValue ?? '')))
       if (path.endsWith(':runAggregationQuery'))
         return jsonRes([{ result: { aggregateFields: { n: { integerValue: String(list.length) } } }, readTime: this.sameTime() }])
+      // 並びと位置（B3 の写し: updated・__name__ の順と [updated, 名前] の位置、名前の順と [名前] の位置。NS の作り物と同じ）
+      const order = ((q.orderBy as { field?: { fieldPath?: string } }[] | undefined) ?? []).map((o) => o.field?.fieldPath ?? '')
+      const ts = (d: Doc) => String(d.fields.updated?.timestampValue ?? '')
+      const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+      if (order[0] === 'updated') list.sort((a, b) => cmp(ts(a), ts(b)) || cmp(a.name, b.name))
+      else if (order[0] === '__name__') list.sort((a, b) => cmp(a.name, b.name))
+      const start = q.startAt as { values: Value[]; before?: boolean } | undefined
+      if (start) {
+        const c =
+          order[0] === 'updated'
+            ? (d: Doc) =>
+                cmp(ts(d), String(start.values[0]?.timestampValue ?? '')) ||
+                cmp(d.name, String(start.values[1]?.referenceValue ?? ''))
+            : (d: Doc) => cmp(d.name, String(start.values[0]?.referenceValue ?? ''))
+        list = list.filter((d) => (start.before ? c(d) >= 0 : c(d) > 0))
+      }
       if (typeof q.limit === 'number') list = list.slice(0, q.limit)
       return jsonRes(
         list.length ? list.map((d) => ({ document: d, readTime: this.sameTime() })) : [{ readTime: this.sameTime() }],

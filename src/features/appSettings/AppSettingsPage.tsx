@@ -3,12 +3,15 @@
 // 「アカウント」（ログインしているアカウントと［ログアウト］）、「ホーム画面に追加」（src/features/login/InstallHelp.tsx を枠付きで）、
 // 「このアプリについて」（版と、同梱する書体のライセンス）。
 // 段階2で、「表示」に記事の字の大きさを、その下に「『知ってる』にした語」（src/features/appSettings/KnownTermsSettings.tsx）を足した
-// （docs/SPEC.md の 9.・5.8。設計: 段階2の 1.23）。同期の区切りと［今すぐ同期］は作らない（■12 の C）。Claude との連携は段階3
+// （docs/SPEC.md の 9.・5.8。設計: 段階2の 1.23）。同期の区切りと［今すぐ同期］は作らない（■12 の C）。
+// 段階3で、「『知ってる』にした語」の下に「Claude との連携」（コネクタの URL・連携の状態と接続の一覧・書き込みの許可・解除・手順書・
+// ツールの許可の案内。src/features/claude/ClaudeSettings.tsx）を足した（段階3の設計の 3.1）
 import { useId } from 'react'
 import { APP_VERSION } from '../../sync/appVersion'
 import { signOut, useSync } from '../../sync/controller'
 import { useDocumentTitle } from '../../ui/hooks'
 import { AppHeader, useGoBack } from '../../ui/Layout'
+import { ClaudeSettings } from '../claude/ClaudeSettings'
 import { InstallHelp } from '../login/InstallHelp'
 import { DisplaySettings } from './DisplaySettings'
 import { KnownTermsSettings } from './KnownTermsSettings'
@@ -97,6 +100,7 @@ export function AppSettingsPage() {
         <h1 className="visually-hidden">設定</h1>
         <DisplaySettings />
         <KnownTermsSettings />
+        <ClaudeSettings />
         <AccountSection />
         <InstallHelp />
         <AboutSection />

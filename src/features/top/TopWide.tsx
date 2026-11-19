@@ -7,7 +7,9 @@
 // で、同じ列の次のカードを続けて開ける）。重ねる列は panelSideFor の1か所で決める（■7 の答えで替える。B なら、いつも 'world'）。
 // 列ごとに差し込み口（PanelSlot）を列の一覧の兄弟に置き、詳細の部品（src/features/topic/TopicHost.tsx）がそこへ出す。重ねた列の一覧は
 // inert にする（Tab で隠れたカードに入らない。パネルは inert の外）。
-// ほかの画面から戻った時は、列ごとのスクロールの位置へ戻す（src/store/uiStore.ts の useTopUi。設計: 段階2の 2.）
+// ほかの画面から戻った時は、列ごとのスクロールの位置へ戻す（src/store/uiStore.ts の useTopUi。設計: 段階2の 2.）。
+// 段階3で、話題が1本も無い列（今の出どころでは、世界の話題がほとんど入らない）の見出しの下に1行を出すようにした（SECTION_TEXTS の
+// columnEmpty。作者に伺っている Q18 の今の決め方 A。列の形は版ごとに変えず、空の世界の列は詳細のパネルの置き場になる。段階3の設計の 3.4）
 import { useCallback, useLayoutEffect, useMemo, useRef, type JSX } from 'react'
 import { regionLabel } from '../../domain/fixedTexts'
 import { useTopUi } from '../../store/uiStore'
@@ -105,6 +107,7 @@ export function TopWide({ view, list, past, rootRef }: TopLayoutProps): JSX.Elem
                   note={SECTION_TEXTS.columnNote}
                   items={columns[c]}
                   onOpen={c === 'jp' ? onOpenJp : onOpenWorld}
+                  emptyNote={SECTION_TEXTS.columnEmpty[c]}
                 />
                 {c === 'jp' && columns.other.length ? (
                   <TopSection list={list} section="other" title={SECTION_TEXTS.other} items={columns.other} onOpen={onOpenJp} />

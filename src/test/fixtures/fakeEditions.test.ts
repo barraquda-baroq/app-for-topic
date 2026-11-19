@@ -2,7 +2,9 @@
 // 中身が作り物だけ（URL は https://example.com/…、社は作り物の一覧、読んだ所は「××ニュース」）・上限の内（コネクタの確かめで断る物が、
 // 断る物を入れた1本と後の版の記録の見本のほかに無い）。作り物の版は、テスト・エミュレーターに入れる道具・段階2の画面の見本で使う。
 // 段階2で足した extras（設計: 段階2の 5.3・4.1）: 既定の出力（id・数）は今と同じ・correctsEmphasis の訂正の対象が強調した語句・どれも送る
-// 直前の確かめを通る（newerTopic・newerEdition で v: 2 にした記録は、v の誤りだけで断られる）
+// 直前の確かめを通る（newerTopic・newerEdition で v: 2 にした記録は、v の誤りだけで断られる）。
+// 段階3で足した extras（段階3の設計の 3.4）: noWorld（いちばん新しい版の世界の話題を除く）・creditSources（出典を出典の書き方のある作り物の
+// 社に替える。id・order・場面の id を作り直す）。ほかの版は同じで、送る直前の確かめを通る
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { checkEmphasis, emphasisFieldText, firstOccurrence, splitEmphasis } from '../../domain/emphasis'
 import { deepEqual, stableStringify } from '../../domain/equal'
@@ -27,7 +29,11 @@ import {
   CHAIN_CORRECTION_TEXT,
   CLOSURE_CORRECTION_TEXT,
   CLOSURE_EMPHASIS,
+  CREDIT_CC_BY_RANK,
+  CREDIT_PRESS_RANK,
+  FAKE_CREDIT_AUTHOR,
   FAKE_MONTH_EXTRAS,
+  FAKE_MONTH_STAGE3_EXTRAS,
   FAKE_TOPIC_SCENES,
   FAKE_URL_PREFIX,
   FAKE_VIA,
@@ -40,7 +46,7 @@ import {
   type FakeMonth,
   type FakeTopicScene,
 } from './fakeEditions'
-import { FAKE_OUTLET_NAMES, FAKE_OUTLETS, FAKE_UNLISTED_OUTLET } from './fakeOutlets'
+import { FAKE_CREDIT_OUTLETS, FAKE_OUTLET_NAMES, FAKE_OUTLETS, FAKE_UNLISTED_OUTLET } from './fakeOutlets'
 
 const opts = { outlets: FAKE_OUTLETS }
 const ED_OPTS = { date: '2026-11-15', slot: '12', seed: 'test' } as const
@@ -670,5 +676,71 @@ describe('makeFakeMonth の extras（段階2の見本と E2E の場面。設計:
       expect(checkCorrection(c, { existingForTopic: perTopic.get(c.topicId) ?? 0 }).errors).toEqual([])
       perTopic.set(c.topicId, (perTopic.get(c.topicId) ?? 0) + 1)
     }
+  })
+})
+
+describe('makeFakeMonth の段階3の extras（段階3の設計の 3.4）', () => {
+  const BASE = { until: '2026-11-15', untilSlot: '12', days: 3, seed: 'stage3' } as const
+  const plain = makeFakeMonth(BASE)
+  const before = plain.editions.at(-1)!
+
+  it('段階2の extras とは別の名前（段階2の見本の「全部を足す」は今のまま）', () => {
+    expect([...FAKE_MONTH_STAGE3_EXTRAS]).toEqual(['noWorld', 'creditSources'])
+    for (const x of FAKE_MONTH_STAGE3_EXTRAS) expect((FAKE_MONTH_EXTRAS as readonly string[]).includes(x)).toBe(false)
+  })
+
+  it('noWorld: いちばん新しい版の世界の話題を除く（版の order からも）。ほかの版・訂正は同じ', () => {
+    const m = makeFakeMonth({ ...BASE, extras: ['noWorld'] })
+    const newest = m.editions.at(-1)!
+    const worldIds = before.topics.filter((t) => t.region === 'world').map((t) => t.id)
+    expect(worldIds.length).toBeGreaterThan(0)
+    expect(m.scenes.extras?.noWorld).toEqual({ editionId: before.edition.id, removed: worldIds })
+    expect(newest.topics.every((t) => t.region === 'jp')).toBe(true)
+    expect(newest.topics).toEqual(before.topics.filter((t) => t.region !== 'world'))
+    expect(newest.edition.order).toEqual(newest.topics.map((t) => t.id))
+    expect(checkEdition(newest.edition).errors).toEqual([])
+    expect(deepEqual(m.editions.slice(0, -1), plain.editions.slice(0, -1))).toBe(true)
+    expect(m.corrections).toEqual(plain.corrections)
+  })
+
+  it('creditSources: 4位（国内）の出典を府省・庁の作り物の社に、13位（世界）を CC BY の作り物の社（著者つき）に替える', () => {
+    const m = makeFakeMonth({ ...BASE, extras: ['creditSources'] })
+    const newest = m.editions.at(-1)!
+    const x = m.scenes.extras?.creditSources
+    const press = newest.topics[CREDIT_PRESS_RANK - 1]
+    const ccBy = newest.topics[CREDIT_CC_BY_RANK - 1]
+    expect(x).toEqual({ pressTopicId: press.id, ccByTopicId: ccBy.id })
+    expect(press.region).toBe('jp')
+    expect(ccBy.region).toBe('world')
+    expect(press.sources.map((s) => s.outlet)).toEqual([
+      FAKE_CREDIT_OUTLETS.site,
+      FAKE_CREDIT_OUTLETS.title,
+      FAKE_CREDIT_OUTLETS.noLink,
+    ])
+    expect(ccBy.sources.map((s) => [s.outlet, s.author])).toEqual([[FAKE_CREDIT_OUTLETS.ccBy, FAKE_CREDIT_AUTHOR]])
+    // outletNames は出典の社だけ・URL は作り物
+    expect(press.outletNames).toEqual(press.sources.map((s) => s.outlet))
+    expect(ccBy.outletNames).toEqual([FAKE_CREDIT_OUTLETS.ccBy])
+    for (const s of [...press.sources, ...ccBy.sources]) expect(s.url.startsWith(FAKE_URL_PREFIX)).toBe(true)
+    // 中身が替わったので id を作り直し、版の order・場面の id も替える（ほかの話題は同じ）
+    for (const t of [press, ccBy]) {
+      expect(t.id).toBe(topicIdOf(t))
+      expect(t.threadId).toBe(t.id)
+    }
+    expect(press.id).not.toBe(before.topics[CREDIT_PRESS_RANK - 1].id)
+    expect(newest.edition.order).toEqual(newest.topics.map((t) => t.id))
+    expect(newest.scenes.outlookEmphasis).toBe(press.id)
+    for (const [i, t] of newest.topics.entries())
+      if (i !== CREDIT_PRESS_RANK - 1 && i !== CREDIT_CC_BY_RANK - 1) expect(t).toEqual(before.topics[i])
+    // 送る直前の確かめを通る
+    for (const t of [press, ccBy]) expect([t.id, checkTopic(t, opts).errors]).toEqual([t.id, []])
+    expect(checkEdition(newest.edition).errors).toEqual([])
+  })
+
+  it('2つを一緒に足すと、出典を替えた国内の話題が残り、世界の話題（CC BY の出典の話題も）は除かれる', () => {
+    const m = makeFakeMonth({ ...BASE, extras: ['creditSources', 'noWorld'] })
+    const newest = m.editions.at(-1)!
+    expect(newest.edition.order).toContain(m.scenes.extras?.creditSources?.pressTopicId)
+    expect(m.scenes.extras?.noWorld?.removed).toContain(m.scenes.extras?.creditSources?.ccByTopicId)
   })
 })

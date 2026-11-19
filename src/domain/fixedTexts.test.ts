@@ -1,5 +1,6 @@
 // 決まった値の言葉と決まった文の割り当て（docs/SPEC.md の 7.1 の「決まった値と決まった文」・5.5・5.7・16.3）。知らない値の扱いも表のとおり。
-// 段階2で足した日付の書き方（版の日付・版の名前・経緯の日付・出典の日時。曜日・月・年の境・知らない形は null。設計: 段階2の 1.20）
+// 段階2で足した日付の書き方（版の日付・版の名前・経緯の日付・出典の日時。曜日・月・年の境・知らない形は null。設計: 段階2の 1.20）。
+// 段階3で、出どころの言葉（「報道」「元記事」→「出典」「資料」。SOURCE_WORDS。段階3の設計の 3.2）
 import { describe, expect, it } from 'vitest'
 import {
   aiLabel,
@@ -18,6 +19,7 @@ import {
   regionLabel,
   slotLabel,
   sourceDateText,
+  SOURCE_WORDS,
   stanceLabel,
   timelineWhenText,
 } from './fixedTexts'
@@ -59,7 +61,7 @@ describe('決まった値の言葉', () => {
       '使用量の上限',
       '障害',
       '時間切れ',
-      '読める記事が足りない',
+      '読める資料が足りない',
       'そのほか',
     ])
     expect(reasonKindLabel('bug')).toBe('そのほか')
@@ -68,14 +70,31 @@ describe('決まった値の言葉', () => {
   })
 })
 
+describe('出どころの言葉（段階3。Q19 のあわせての今の決め方 A。段階3の設計の 3.2）', () => {
+  it('「報道」「元記事」を「出典」「資料」に替える（答えで替わるのは SOURCE_WORDS の1か所）', () => {
+    expect(SOURCE_WORDS).toEqual({
+      card: '出典',
+      cardUnit: 'か所',
+      sources: '出典',
+      material: '今回読んだ資料',
+      original: '元の資料',
+      readable: '資料',
+    })
+    // 決まった文はこの言葉から作る（新聞を思わせる言葉を残さない）
+    for (const text of [FIXED_TEXTS.claimUnverified, FIXED_TEXTS.commonNote, reasonKindLabel('no-sources')]) {
+      expect(text).not.toMatch(/報道|元記事|記事/)
+    }
+  })
+})
+
 describe('アプリが出す決まった文', () => {
   it('1〜5・8 の文', () => {
     expect(FIXED_TEXTS.soWhatNone).toBe('この話題では特になし')
-    expect(FIXED_TEXTS.claimUnverified).toBe('今回集めた報道では、主張を確かめられなかった')
+    expect(FIXED_TEXTS.claimUnverified).toBe('今回読んだ資料では、主張を確かめられなかった')
     expect(FIXED_TEXTS.viewNone).toBe('対立する見解は特になし（事実の報道のため）')
     expect(FIXED_TEXTS.stakeholdersNote).toBe('（並べて示すだけで、どれが正しいかは判定しません）')
     expect(FIXED_TEXTS.commonNote).toBe(
-      '「AI の見解」と「対立見解」は、どちらも AI が書いたもので、偏っている可能性があります。両方をあわせて読み、必要なら元記事で確かめてください。',
+      '「AI の見解」と「対立見解」は、どちらも AI が書いたもので、偏っている可能性があります。両方をあわせて読み、必要なら元の資料で確かめてください。',
     )
     expect(FIXED_TEXTS.correctionPrefix).toBe('訂正:')
     expect(FIXED_TEXTS.newerRecord).toBe('新しい形の記録（アプリを更新してください）')
@@ -84,7 +103,7 @@ describe('アプリが出す決まった文', () => {
 
   it('7. 作れなかった版「{12:00}版は作れませんでした（{理由}）」', () => {
     expect(editionFailedText('12', 'quota')).toBe('12:00版は作れませんでした（使用量の上限）')
-    expect(editionFailedText('20', 'no-sources')).toBe('20:00版は作れませんでした（読める記事が足りない）')
+    expect(editionFailedText('20', 'no-sources')).toBe('20:00版は作れませんでした（読める資料が足りない）')
     expect(editionFailedText('20', 'bug')).toBe('20:00版は作れませんでした（そのほか）')
     expect(editionFailedText('08', 'quota')).toBeNull()
   })

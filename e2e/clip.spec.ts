@@ -3,7 +3,9 @@
 // 開いている版とは別の版の話題）の詳細を開く。
 // @pc: クリップボードの許可を与え、コピーした文が、テストの側で同じ作り物から作った clipText と1字も違わない・お知らせが出る。
 // @s・@ios: writeText を断るようにして、文を選んだ窓の欄にフォーカスがあり、全部が選ばれ、同じ文。Esc で窓だけ閉じ、フォーカスは
-// ［クリップ］へ戻る（作り物の版の中身はすべて作り物）
+// ［クリップ］へ戻る（作り物の版の中身はすべて作り物）。
+// 段階3で、段の頭を「出典:」に替え（Q19 のあわせて）、出典の書き方のある作り物の社の出典は URL の行の代わりに出典の表示の行になる
+// 場面（作り物の版の extras の creditSources）を足した（段階3の設計の 3.4 の 4.）
 import { expect, test, type Page } from '@playwright/test'
 import { clipText } from '../src/domain/clipText'
 import { repairTopic } from '../src/domain/repair'
@@ -13,17 +15,23 @@ import { collectDiagnosticsOnFailure, openTop } from './helpers'
 
 collectDiagnosticsOnFailure()
 
-/** 決めた時刻で作り物の版を入れて開き、続報の鎖の1本目の詳細を開く。返り値はその話題のクリップの文（テストの側で作った物） */
-async function openChainFirst(page: Page): Promise<string> {
-  const r = await openTop(page, '/', { expect: { testId: 'top-page' } })
+/**
+ * 決めた時刻で作り物の版を入れて開き、続報の鎖の1本目（credit なら、出典を府省・庁の作り物の社に替えた話題）の詳細を開く。返り値は
+ * その話題のクリップの文（テストの側で作った物）
+ */
+async function openChainFirst(page: Page, { credit = false }: { credit?: boolean } = {}): Promise<string> {
+  const r = await openTop(page, '/', {
+    expect: { testId: 'top-page' },
+    ...(credit ? { editions: { extras: ['creditSources' as const] } } : {}),
+  })
   if (!r.editions) throw new Error('作り物の版を入れていません')
   const month = makeFakeMonth(r.editions)
-  const id = month.scenes.chain[0]
+  const id = credit ? month.scenes.extras!.creditSources!.pressTopicId : month.scenes.chain[0]
   const raw = month.editions.flatMap((e) => e.topics).find((t) => t.id === id)
   const topic = repairTopic(raw, { outlets: FAKE_OUTLETS })
   if (topic.kind !== 'ok') throw new Error('作り物の話題を写しにできません')
   const corrections = month.corrections.filter((c) => c.topicId === id).sort((a, b) => a.createdAt - b.createdAt)
-  expect(corrections).toHaveLength(1)
+  expect(corrections).toHaveLength(credit ? 0 : 1)
   // 端末の中を読み終えて、作り物の版が入るまで待ってから開く（開いた版とは別の版の話題なので、詳細が端末から読む）
   await expect
     .poll(
@@ -37,11 +45,11 @@ async function openChainFirst(page: Page): Promise<string> {
     .toBe('ready')
   expect(await page.evaluate((topicId) => window.__ts.openTopic(topicId), id)).toBe(true)
   await expect(page.getByTestId('topic-detail')).toHaveAttribute('data-topic-id', id)
-  return clipText(topic.value, corrections)
+  return clipText(topic.value, corrections, FAKE_OUTLETS)
 }
 
 test.describe('［クリップ］（クリップボードを使える時）', { tag: ['@pc'] }, () => {
-  test('押すと、見出し・版・地域とジャンル・要約・訂正・元記事の文がクリップボードに入り、お知らせが出る', async ({
+  test('押すと、見出し・版・地域とジャンル・要約・訂正・出典の文がクリップボードに入り、お知らせが出る', async ({
     page,
     context,
   }) => {
@@ -49,10 +57,24 @@ test.describe('［クリップ］（クリップボードを使える時）', { 
     const expected = await openChainFirst(page)
     expect(expected).toContain('\n\n訂正: ')
     expect(expected).toContain('（××ニュースで読んだ）')
+    expect(expected).toContain('\n\n出典:\n')
     await page.getByTestId('topic-clip').click()
     await expect(page.getByRole('status').filter({ hasText: 'クリップボードにコピーしました' })).toBeVisible()
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected)
     await expect(page.getByTestId('clip-dialog')).toHaveCount(0)
+  })
+
+  test('府省・庁の作り物の社の出典は、URL の行の代わりに出典の表示の行（「…を加工して作成」。URL を含む）', async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    const expected = await openChainFirst(page, { credit: true })
+    expect(expected).toContain('\n出典：〇〇省ホームページ（https://example.com/')
+    expect(expected).toContain('を加工して作成（加工: Topic Studio（AI による要約））')
+    await page.getByTestId('topic-clip').click()
+    await expect(page.getByRole('status').filter({ hasText: 'クリップボードにコピーしました' })).toBeVisible()
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected)
   })
 })
 

@@ -52,7 +52,7 @@ describe('押した処理の中で書く（iPhone の Safari。設計: 段階2�
   })
 
   it('文は作者の答え A の形（訂正は要約の後に「訂正: …」・だから何？・強調は入れない・××ニュースで読んだ）', () => {
-    expect(EXPECTED).toContain(`\n\n訂正: ${CHAIN_CORRECTION_TEXT}\n\n元記事:\n`)
+    expect(EXPECTED).toContain(`\n\n訂正: ${CHAIN_CORRECTION_TEXT}\n\n出典:\n`)
     expect(EXPECTED).toContain('（××ニュースで読んだ）')
     expect(EXPECTED.startsWith(`${FIRST.headline}\n2026年11月13日（金）12:00版・国内・経済\n\n`)).toBe(true)
     for (const v of Object.values(FIRST.soWhat)) if (v) expect(EXPECTED).not.toContain(v)

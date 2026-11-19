@@ -6,6 +6,7 @@
 // DS の browser.ts の copyText（失敗した時に execCommand に落ちる）は写さない（9. の「選んだ状態の窓」と違う）
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { clipText, type ClipTopic } from '../../domain/clipText'
+import { topicOutlets } from '../../store/appStore'
 import { notify } from '../../store/uiStore'
 import { CopyIcon } from '../../ui/icons'
 import { testIds } from '../top/testIds'
@@ -52,7 +53,7 @@ export function ClipButton({ topic, corrections }: ClipButtonProps): JSX.Element
   }, [dialog])
 
   const onClick = () => {
-    const text = clipText(topic, corrections)
+    const text = clipText(topic, corrections, topicOutlets())
     void writeClipboard(text).then((ok) => {
       if (ok) notify(CLIP_TEXTS.copied)
       else if (mounted.current) setDialog(text)

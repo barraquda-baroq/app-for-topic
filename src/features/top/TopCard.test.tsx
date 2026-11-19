@@ -1,5 +1,6 @@
 // 一覧のカード（docs/SPEC.md の 9. の「一覧のカード」・5.10。設計: 段階2の 1.5・1.15・1.16・1.17）: 頭の行（重大印・地域とジャンル・
-// 続報・続報あり・訂正あり・版の名前）・見出しのボタン・要約（強調あり・用語の印なし）・下の行（結論ラベル・速報・未確認・報じた社・照合済み）。
+// 続報・続報あり・訂正あり・版の名前）・見出しのボタン・要約（強調あり・用語の印なし）・下の行（結論ラベル・速報・未確認・出典にした所・
+// 照合済み。出典は段階3で「報道: …（n社）」から「出典: …（nか所）」に替えた）。
 // 知らない地域・ジャンル・結論ラベルは書かない。既読は data-read と淡い見出しのクラス。カードのどこを押しても1回だけ開く
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -32,7 +33,7 @@ function renderCard(topic: ShownTopic, props: Partial<Parameters<typeof TopCard>
 }
 
 describe('一覧のカード', () => {
-  it('重大印の話題: 頭の行の頭に「重大」の札と地域・ジャンル、下の行に結論ラベル・速報・未確認・報じた社・照合済み', () => {
+  it('重大印の話題: 頭の行の頭に「重大」の札と地域・ジャンル、下の行に結論ラベル・速報・未確認・出典にした所・照合済み', () => {
     const topic = shownOf(FAKE_TOPIC_SCENES.major)
     expect(topic.major).toBe(true)
     const { card, meta, foot } = renderCard(topic)
@@ -45,7 +46,7 @@ describe('一覧のカード', () => {
     expect([...foot.children].map((c) => c.textContent)).toEqual([
       '未確定',
       '速報・未確認',
-      `報道: ${topic.outletNames.slice(0, 2).join('・')} ほか（${topic.outletNames.length}社）`,
+      `出典: ${topic.outletNames.slice(0, 2).join('・')} ほか（${topic.outletNames.length}か所）`,
       CARD_TEXTS.checked,
     ])
     // 見出しは <h3><button>（入れ子のボタンは作らない）
@@ -65,7 +66,7 @@ describe('一覧のカード', () => {
     expect(topic.terms.length).toBeGreaterThan(0)
   })
 
-  it('ふつうの話題: 重大印・速報が無く、報じた社が2社なら「ほか」を付けない', () => {
+  it('ふつうの話題: 重大印・速報が無く、出典にした所が2つなら「ほか」を付けない', () => {
     const topic = shownOf(4)
     expect(topic.major).toBe(false)
     expect(topic.outletNames).toHaveLength(2)
@@ -74,7 +75,7 @@ describe('一覧のカード', () => {
     expect(card.classList.contains('is-major')).toBe(false)
     expect(meta.textContent).toBe('国内・経済')
     expect(foot.textContent).not.toContain('速報・未確認')
-    expect(foot.textContent).toContain(`報道: ${topic.outletNames.join('・')}（2社）`)
+    expect(foot.textContent).toContain(`出典: ${topic.outletNames.join('・')}（2か所）`)
   })
 
   it('照合しなかった話題には「照合済み」を出さない', () => {

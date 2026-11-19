@@ -408,6 +408,7 @@ describe('部品の書き方', () => {
   it('src/ の下の CSS をすべて確かめる（共通・画面ごとの CSS）', () => {
     const names = ALL_CSS.map(([name]) => name)
     expect(names).toEqual([
+      'features/claude/claude.css',
       'features/editions/editions.css',
       'features/login/login.css',
       'features/top/top.css',

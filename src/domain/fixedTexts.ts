@@ -3,7 +3,9 @@
 // 知らない値（後の版で足した値）の扱いも表のとおりにする（地域・ジャンルは総合にだけ出す・ラベルは出さない・立場は「不明」と同じ・
 // 枠は版として出さない・作れなかった理由は「そのほか」）。
 // 段階2で、版の日付・経緯の日付・出典の日時の書き方（editionDateText・editionLongDateText・editionNameText・timelineWhenText・
-// publishedAtText・sourceDateText）を足した。形の分からない値は null（書かない）にする（開発。設計: 段階2の 1.17・1.20）
+// publishedAtText・sourceDateText）を足した。形の分からない値は null（書かない）にする（開発。設計: 段階2の 1.17・1.20）。
+// 段階3で、出どころが府省・庁の発表になったので、「報道」「元記事」の言葉を「出典」「資料」に替えた（SOURCE_WORDS の1か所。作者に
+// 伺っている Q19 の「あわせて：画面の言葉」の今の決め方 A。段階3の設計の 3.2）
 import { weekdayJaOf } from './dates'
 import { isJstDateTime, isTimelineWhen, isYm, isYmd } from './jst'
 import {
@@ -21,6 +23,29 @@ import {
   type Slot,
   type Stance,
 } from './types'
+
+// ---------- 出どころの言葉（段階3。段階3の設計の 3.2） ----------
+
+/**
+ * 出どころの言葉（作者に伺っている Q19 の「あわせて：画面の言葉」。今の決め方 A: 出どころが新聞でなく役所の発表になるので、
+ * 「報道」「元記事」を「出典」「資料」に替える。B（今のまま）に戻す時は、この表の値を括弧の中の言葉にするだけ）。
+ * 一覧のカードの頭（src/features/top/texts.ts の outletsText）・詳細の区切りの見出し（src/features/topic/detailTexts.ts）・
+ * クリップの段の頭（src/domain/clipText.ts）・下の決まった文（当事者・共通の注記・作れなかった理由）が使う
+ */
+export const SOURCE_WORDS = {
+  /** 一覧のカードの頭（「出典: （所）・（所） ほか（3か所）」。B: 報道） */
+  card: '出典',
+  /** 一覧のカードの数の単位（出典にした所の数。B: 社） */
+  cardUnit: 'か所',
+  /** 詳細の区切りの見出し・クリップの段の頭（B: 元記事） */
+  sources: '出典',
+  /** 当事者の主張を確かめた材料（B: 今回集めた報道） */
+  material: '今回読んだ資料',
+  /** 共通の注記の、確かめる先（B: 元記事） */
+  original: '元の資料',
+  /** 作れなかった理由の「読める…が足りない」（B: 記事） */
+  readable: '資料',
+} as const
 
 // ---------- 決まった値の画面の言葉 ----------
 
@@ -61,7 +86,7 @@ export const REASON_KIND_LABELS: Readonly<Record<ReasonKind, string>> = {
   quota: '使用量の上限',
   outage: '障害',
   timeout: '時間切れ',
-  'no-sources': '読める記事が足りない',
+  'no-sources': `読める${SOURCE_WORDS.readable}が足りない`,
   other: 'そのほか',
 }
 
@@ -106,14 +131,13 @@ export const FIXED_TEXTS = {
   /** 1. soWhat.* が null */
   soWhatNone: 'この話題では特になし',
   /** 2. stakeholders[].claim が null */
-  claimUnverified: '今回集めた報道では、主張を確かめられなかった',
+  claimUnverified: `${SOURCE_WORDS.material}では、主張を確かめられなかった`,
   /** 3. view.kind == 'none' かつ noneReason が null */
   viewNone: '対立する見解は特になし（事実の報道のため）',
   /** 4. 当事者の見出しの文（docs/SPEC.md の 5.5） */
   stakeholdersNote: '（並べて示すだけで、どれが正しいかは判定しません）',
   /** 5. 共通の注記（docs/SPEC.md の 5.7） */
-  commonNote:
-    '「AI の見解」と「対立見解」は、どちらも AI が書いたもので、偏っている可能性があります。両方をあわせて読み、必要なら元記事で確かめてください。',
+  commonNote: `「AI の見解」と「対立見解」は、どちらも AI が書いたもので、偏っている可能性があります。両方をあわせて読み、必要なら${SOURCE_WORDS.original}で確かめてください。`,
   /**
    * 6. genre == 'ai' の見解の注記（AI 自身が当事者。docs/SPEC.md の 5.6）。仮（開発が置いた文）。段階2の見本の ■10 で作者に確かめて
    * いる（答えが来るまでこの文を見解の上に出す。docs/SPEC.md の 17.1）

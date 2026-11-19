@@ -1,7 +1,7 @@
 /* ===== 話題の詳細（docs/SPEC.md の 9. の「詳細」） =====
    S・M の下からのシート・L の列に重ねるパネル・詳細の中の並び・用語の印と説明の箱・クリップの窓（src/features/topic）。
    色は src/styles.css の変数だけを使い、強調の色（--emphasis）は .emph（src/styles.css）だけで使う（src/screensCss.test.ts）。
-   記事の字（本文・用語の説明・元記事）は設定の字の大きさ（--read-size・--read-line・--read-title。<html data-text-size>）に従い、
+   記事の字（本文・用語の説明・出典）は設定の字の大きさ（--read-size・--read-line・--read-title。<html data-text-size>）に従い、
    頭の行・ボタン・下の細い字は従わない（360px の並びを崩さない。設計: 段階2の 1.18・3.4）。testid の印（data-*）は選ばない */
 
 /* ----- シート（今の Modal。className topic-sheet）・パネル ----- */
@@ -130,6 +130,38 @@
   outline: none;
 }
 
+/* CC BY の出典（Global Voices）の話題の頭の1行と元記事へのリンク（見出しの下。段階3の設計の 3.4 の 3.。Global Voices の帰属の決まり） */
+.topic-credit-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 2px solid var(--border-strong);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.topic-credit-head-text,
+.topic-credit-head p.topic-credit-head-link {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.topic-credit-head-link .icon {
+  margin-left: 2px;
+  vertical-align: -1px;
+  color: inherit;
+}
+
+@media (max-width: 899px), (pointer: coarse) {
+  a.topic-credit-head-link {
+    display: flex;
+    align-items: center;
+    min-height: var(--tap);
+  }
+}
+
 /* 結論（ラベルの札・速報・未確認・補足） */
 .topic-conclusion {
   display: flex;
@@ -166,7 +198,7 @@
   color: var(--text-muted);
 }
 
-/* 区切り（だから何？・当事者・見解・経緯・用語・元記事） */
+/* 区切り（だから何？・当事者・見解・経緯・用語・出典） */
 .topic-section {
   display: flex;
   flex-direction: column;
@@ -377,7 +409,7 @@
   font-weight: 700;
 }
 
-/* 元記事（リンクは新しいタブ。リンクにしない URL は文で、選べる） */
+/* 出典（リンクは新しいタブ。リンクにしない URL は文で、選べる。段階3で見出しを「元記事」から「出典」に替えた） */
 .topic-source {
   display: flex;
   flex-direction: column;
@@ -390,7 +422,7 @@
   color: inherit;
 }
 
-/* 指で操作する端末と S・M では、元記事のリンクの押せる所を 34px 以上にする（docs/SPEC.md の 14.5・設計: 段階2の 3.4。1行の名前は
+/* 指で操作する端末と S・M では、出典のリンクの押せる所を 34px 以上にする（docs/SPEC.md の 14.5・設計: 段階2の 3.4。1行の名前は
    本文の行の高さ 28px しかなく、すぐ下の日時の行に指がかかった。段階2の点検で足した）。名前とアイコンは中の span（.topic-source-label）に
    まとめてあるので、アイコンは名前の後に並ぶまま */
 @media (max-width: 899px), (pointer: coarse) {
@@ -408,6 +440,15 @@
 
 .topic-url {
   font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* 出典の表示の文（「出典：…を加工して作成（加工: …）」。小さな字の選べる文で、中の URL はリンクにしない。段階3の設計の 3.4 の 3.） */
+.topic-credit {
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--text-muted);
   overflow-wrap: anywhere;
   user-select: text;

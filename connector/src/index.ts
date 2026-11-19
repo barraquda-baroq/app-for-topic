@@ -2,7 +2,8 @@
 // - OAuth 2.1 の認可サーバー（@cloudflare/workers-oauth-provider）: claude.ai の公開の識別子（CIMD）で受け付ける。DCR は
 //   ENABLE_DCR の時だけ。同意は毎回聞く（覚えない）
 // - /mcp: MCP のサーバー（@modelcontextprotocol/server）。トークンのある呼び出しだけ
-// - Vault（Durable Object）: コネクタ自身の匿名の Firebase のアカウント・連携の状態・数の記録（写し・回・取りに行く所は B3 以降）
+// - Vault（Durable Object）: コネクタ自身の匿名の Firebase のアカウント・連携の状態・数の記録・記録の写し・回・候補と資料の控え
+//   （vault/core.ts の VaultCore。取りに行く所は fetch/）
 // - 毎日 4:23（日本時間）: 期限切れの OAuth の記録の片付けと、Vault の夜の仕事（vault.nightly）
 import OAuthProvider, { GrantType, OAuthError, getOAuthApi, type OAuthProviderOptions } from '@cloudflare/workers-oauth-provider'
 import { allowedCimdId, checkRegistration } from './auth/clientPolicy'

@@ -6,7 +6,9 @@
 // - 指で操作する端末（S・M）では、押せる所が 34px 以上
 // 段階2で、作り物の版を入れた画面（トップ・詳細のシートとパネル・クリップの窓・版の一覧・追いつきの画面と、その詳細）も、同じ7つの
 // 幅で横にはみ出さない事・ヘッダーに版の表示が入る事（S は名前を出さない）・指の端末で押せる所が 34px 以上の事を足した（設計: 段階2の
-// 4.2 の塊 6・8. の 3）。作り物の版の中身はすべて作り物
+// 4.2 の塊 6・8. の 3）。作り物の版の中身はすべて作り物。
+// 段階3で、L の世界の話題の無い版（作り物の版の extras の noWorld）の世界の列に1行が出て、横にはみ出さず、国内のカードの詳細が
+// 世界の列に重なる事を足した（作者に伺っている Q18 の今の決め方 A。段階3の設計の 3.4・7. の「E2E（Firebase なし）」）
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { FAKE_TOPIC_SCENES, makeFakeMonth } from '../src/test/fixtures/fakeEditions'
 import { cardOf, collectDiagnosticsOnFailure, openTop, tapSize } from './helpers'
@@ -217,10 +219,10 @@ async function sweepScreens(page: Page, width: number, height: number, touch: bo
     await tapSize(box.getByTestId('modal-close'), `${label} 詳細の［×］`)
     await tapSize(box.getByTestId('topic-clip'), `${label} ［クリップ］`, false)
     await tapSize(box.getByTestId('term-known').first(), `${label} ［知ってる］`, false)
-    // 元記事のリンク（文の中の用語の印と違い、1行の独立したリンク。設計: 段階2の 3.4・docs/SPEC.md の 14.5）
-    await tapSize(box.locator('.topic-source-link').first(), `${label} 元記事のリンク`, false)
+    // 出典のリンク（文の中の用語の印と違い、1行の独立したリンク。設計: 段階2の 3.4・docs/SPEC.md の 14.5）
+    await tapSize(box.locator('.topic-source-link').first(), `${label} 出典のリンク`, false)
   }
-  // 長い話題の下の端（元記事・下の細い字）まで送っても横にはみ出さない
+  // 長い話題の下の端（出典・下の細い字）まで送っても横にはみ出さない
   await detail.locator('.topic-foot').scrollIntoViewIfNeeded()
   await noSideScroll(page, `${label} 詳細の下の端`, box)
 
@@ -296,6 +298,35 @@ test.describe('横にスクロールしない（PC）', { tag: ['@pc'] }, () => 
       page,
     }) => {
       await sweepScreens(page, width, height, false)
+    })
+
+    test(`${width}px: 世界の話題の無い版は、世界の列に1行が出て横にはみ出さない。国内のカードの詳細は世界の列に重なる`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height })
+      const { editions } = await openTop(page, '/', { editions: { extras: ['noWorld'] } })
+      const month = makeFakeMonth(editions!)
+      const newest = month.editions[month.editions.length - 1]
+      expect(month.scenes.extras?.noWorld?.removed.length).toBeGreaterThan(0)
+      const columns = page.locator('.top-column')
+      await expect(columns).toHaveCount(2)
+      const world = columns.nth(1).locator('[data-testid="top-section"][data-section="world"]')
+      await expect(world.getByRole('heading', { level: 2 })).toHaveText('世界（知るべき順）')
+      await expect(world.getByTestId('top-section-empty')).toHaveText('この版には世界の話題がありません')
+      await expect(world.getByTestId('top-card')).toHaveCount(0)
+      // 「この版の選び方」は世界の列のいちばん下のまま。国内の列には1行を出さない
+      await expect(columns.nth(1).getByTestId('choice-note')).toBeVisible()
+      await expect(columns.nth(0).getByTestId('top-section-empty')).toHaveCount(0)
+      await expect(columns.nth(0).getByTestId('top-card')).toHaveCount(newest.edition.order.length)
+      await noSideScroll(page, `${width}px 世界の話題の無い版`)
+      // 国内のカードを開くと、詳細のパネルは（空の）世界の列に重なる
+      await cardOf(page, newest.edition.order[0]).locator('.top-card-open').click()
+      const detail = page.getByTestId('topic-detail')
+      await expect(detail).toHaveAttribute('data-mode', 'panel')
+      await expect(columns.nth(1).locator('.topic-panel')).toHaveCount(1)
+      await expect(columns.nth(0).locator('.topic-panel')).toHaveCount(0)
+      await noSideScroll(page, `${width}px 世界の話題の無い版の詳細`, page.locator('.topic-panel'))
+      await closeDetail(page)
     })
   }
 

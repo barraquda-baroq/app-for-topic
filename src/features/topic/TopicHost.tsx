@@ -27,6 +27,7 @@ import {
   loadTopicView,
   markRead,
   threadOf,
+  topicOutlets,
   useApp,
   type EditionView,
   type ThreadTopic,
@@ -230,6 +231,7 @@ function OpenTopic({ sheet, fresh }: { sheet: TopicSheetState; fresh: boolean })
       thread={thread}
       onOpenTopic={(topicId) => openTopic(topicId)}
       noteCloser={noteCloser}
+      outlets={topicOutlets()}
     />
   ) : (
     <p className="muted topic-loading" role="status">

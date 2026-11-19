@@ -70,8 +70,8 @@ jobs:
       # 上がる（upgrade.emu.test.ts）（docs/SPEC.md の 16.3）
       - name: 持ち主の関所・アクセスルール・同期のテスト（Firebase エミュレーター）
         run: npm run test:sync
-      # コネクタの結合テスト（本番のアクセスルール・アプリの同期のエンジンとコネクタの Vault を一緒に動かす。connector/test/emu）。
-      # テストは B3 以降で足す（まだ無い間も通る: connector/vitest.emu.config.ts の passWithNoTests）
+      # コネクタの結合テスト（本番のアクセスルール・アプリの同期のエンジンとコネクタの Vault を一緒に動かす。connector/test/emu の
+      # *.emu.test.ts。写しを本番のルールで読む mirror.emu.test.ts など。設定のファイルの名前の形で拾うので、足したテストはここを直さなくても流れる）
       - name: コネクタの結合テスト（Firebase エミュレーター）
         run: npm run test:connector:emu
       - name: ビルド

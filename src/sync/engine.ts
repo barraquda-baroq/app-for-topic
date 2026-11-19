@@ -17,8 +17,9 @@
 // - データの形の版（src/sync/appModel.ts）: クラウドの版が高ければ、受け取りは続け、送るのを止める（status.outdated）
 // 送受信は exclusive で1つずつ行い、送った結果を記録する前に自分の書いた変更を受け取ることがないようにする（DS と同じ）。
 // DS から外した物（docs/SPEC.md の 16.5）: 分けた文書・月の束・受け取り箱・ゴミ箱・削除の印の片付け・85日の受け取り直し・復元・
-// Claude との連携の許可の読み取り（段階3）。受け取りと送るの細かい決まり（購読する表・始める位置・30日の境・送る前の守り）は
-// src/sync/syncPlan.ts にあり、偽のクラウド（src/test/fakeCloud.ts）も同じ物を使う。
+// Claude との連携の記録の読み取り（連携の記録 config/connector は、画面の部品が読む。src/features/claude/connectorDoc.ts）。
+// 受け取りと送るの細かい決まり（購読する表・始める位置・30日の境・送る前の守り）は src/sync/syncPlan.ts にあり、偽のクラウド
+// （src/test/fakeCloud.ts）も同じ物を使う。
 // エンジンは画面・ストアに頼らずに単体で動く（端末の口は SyncTarget。src/db/persistence.ts の Persistence をそのまま渡せる）。
 // 起動・タブの受け持ち・1日1回の手入れの呼び出しは src/sync/controller.ts（16.2 の 6）がする。
 import {

@@ -2,8 +2,10 @@
 // 版の一覧・追いつき（src/features/editions）が同じ言葉を使うので、1か所に置く（開発。設計: 段階2の 1.20）。記録の決まった値の言葉と
 // 決まった文（7.1）は src/domain/fixedTexts.ts、トップの状態の1行の文は src/domain/editionStatus.ts（domain の選び方が文も返すため）に
 // あり、ここから読み直す。どの言葉も見本の ■11 などで作者に確かめる（言葉の直しは、ここの文だけを替える）。
-// 知らせ方は D9 のとおり静か（数字のアイコン・通知を出さない。版の数は字で出す）
-import { editionNameText, FIXED_TEXTS, reasonKindLabel } from '../../domain/fixedTexts'
+// 知らせ方は D9 のとおり静か（数字のアイコン・通知を出さない。版の数は字で出す）。
+// 段階3で、空の時の文（EMPTY_NOTE。Q8 の A）・カードの出典の言葉（outletsText。Q19 のあわせての A。言葉は fixedTexts.ts の SOURCE_WORDS）・
+// L の空の列の1行（SECTION_TEXTS.columnEmpty。Q18 の A）を替えた・足した（段階3の設計の 3.2・3.4）
+import { editionNameText, FIXED_TEXTS, reasonKindLabel, SOURCE_WORDS } from '../../domain/fixedTexts'
 import { parseEditionId } from '../../domain/ids'
 
 export { newerEditionText, notArrivedText, waitingEditionText } from '../../domain/editionStatus'
@@ -16,9 +18,10 @@ export function editionNameOfId(editionId: string): string | null {
 
 // ---------- トップ（空・待つ間。段階0・1の文のまま。設計: 段階2の 1.7・1.21） ----------
 
-/** 版が1つも無い時（top-empty。段階3までは本当の事なので残す） */
+/** 版が1つも無い時（top-empty。最初の版が届く前の日も、届く時刻の案内で足りる。docs/SPEC.md の 17.6 の 7・8） */
 export const EMPTY_TITLE = 'まだ版はありません'
-export const EMPTY_NOTE = '12:00版と20:00版は、段階3から届くようになります。'
+/** 版が1つも無い時の添え書き（作者に伺っている Q8 の今の決め方 A。答えで替わるのはこの文だけ） */
+export const EMPTY_NOTE = '12:00版と20:00版が、ここに届きます。'
 /** 出せる版が無く、届いた版の話題が端末にそろうのを待っている時（top-waiting。docs/SPEC.md の 7.8 の「版を出す条件」） */
 export const WAITING_TEXT = '版を受け取っています…'
 
@@ -34,6 +37,11 @@ export const SECTION_TEXTS = {
   other: 'そのほか',
   /** 話題が新しい形の記録の時の、押せない淡いカード（docs/SPEC.md の 7.1） */
   newerTopic: FIXED_TEXTS.newerRecord,
+  /**
+   * L の国内・世界の列に話題が1本も無い版の、見出しの下の1行（作者に伺っている Q18 の今の決め方 A。答えで替わるのはこの文だけ。
+   * 段階3の設計の 3.4。今の出どころでは世界の話題がほとんど入らない）
+   */
+  columnEmpty: { jp: 'この版には国内の話題がありません', world: 'この版には世界の話題がありません' },
 } as const
 
 /** 既読を沈めた所（「既読 5件」。docs/SPEC.md の 9.） */
@@ -56,18 +64,19 @@ export const CARD_TEXTS = {
   checked: '照合済み',
 } as const
 
-/** 報じた社を頭から何社出すか（360px で1行に収める。開発。設計: 段階2の 1.5） */
+/** 出典の社を頭から何社出すか（360px で1行に収める。開発。設計: 段階2の 1.5） */
 export const OUTLETS_SHOWN = 2
 
 /**
- * 報じた社（「報道: 〇〇通信・△△新聞 ほか（4社）」。outletNames の頭から2社、3社以上なら「ほか」、括弧に n社 = 長さ。docs/SPEC.md の 5.10）。
- * 0社は null
+ * 出典にした所（「出典: 〇〇省・△△庁 ほか（3か所）」。outletNames の頭から2つ、3つ以上なら「ほか」、括弧に nか所 = 長さ。
+ * docs/SPEC.md の 5.10。段階3で outletNames は出典の社だけから作る（読んでいない所は数えない。段階3の設計の 1.5）。
+ * 言葉は src/domain/fixedTexts.ts の SOURCE_WORDS（Q19 のあわせて）。0 は null
  */
 export function outletsText(outletNames: readonly string[]): string | null {
   if (!outletNames.length) return null
   const head = outletNames.slice(0, OUTLETS_SHOWN).join('・')
   const more = outletNames.length > OUTLETS_SHOWN ? ' ほか' : ''
-  return `報道: ${head}${more}（${outletNames.length}社）`
+  return `${SOURCE_WORDS.card}: ${head}${more}（${outletNames.length}${SOURCE_WORDS.cardUnit}）`
 }
 
 // ---------- この版の選び方（docs/SPEC.md の 6.5・7.2。■14 の A。設計: 段階2の 1.22） ----------

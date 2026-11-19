@@ -60,7 +60,7 @@ test(
     await expect(page.getByTestId('brand')).toBeVisible()
     await expect(page.getByTestId('open-settings')).toBeVisible()
     await expect(page.getByTestId('top-empty')).toContainText('まだ版はありません')
-    await expect(page.getByTestId('top-empty')).toContainText('12:00版と20:00版は、段階3から届くようになります。')
+    await expect(page.getByTestId('top-empty')).toContainText('12:00版と20:00版が、ここに届きます。')
     await noHorizontalScroll(page)
   },
 )

@@ -91,21 +91,21 @@ test.describe('空のトップ画面', { tag: ['@pc', '@s'] }, () => {
     expect(await header.evaluate((e) => getComputedStyle(e).borderBottomWidth)).toBe('1px')
     expect(await header.evaluate((e) => getComputedStyle(e).backdropFilter)).toContain('blur')
 
-    await expect(page.getByTestId('top-empty')).toHaveText('まだ版はありません12:00版と20:00版は、段階3から届くようになります。')
+    await expect(page.getByTestId('top-empty')).toHaveText('まだ版はありません12:00版と20:00版が、ここに届きます。')
     await expect(page).toHaveTitle('Topic Studio')
     // 段階0は同期の表示も版の表示も無い
     await expect(page.getByTestId('sync-indicator')).toHaveCount(0)
     await noHorizontalScroll(page)
   })
 
-  test('歯車で設定の画面を開き（表示・アカウント・ホーム画面に追加・このアプリについて）、［‹ 戻る］でトップへ戻る', async ({
+  test('歯車で設定の画面を開き（表示・知ってる・Claude との連携・アカウント・ホーム画面に追加・このアプリについて）、［‹ 戻る］でトップへ戻る', async ({
     page,
   }) => {
     await openSignedIn(page)
     await page.getByTestId('open-settings').click()
     await expect(page).toHaveURL(/#\/settings$/)
     await expect(page.getByTestId('app-settings')).toBeVisible()
-    for (const id of ['display-settings', 'account-settings', 'install-help', 'about-app'])
+    for (const id of ['display-settings', 'known-terms', 'claude-settings', 'account-settings', 'install-help', 'about-app'])
       await expect(page.getByTestId(id)).toBeVisible()
     await expect(page.getByTestId('about-version')).toHaveText('Topic Studio 0.1')
     await expect(page.getByTestId('about-font-license')).toHaveAttribute('href', './licenses/RobotoMono-OFL.txt')

@@ -39,7 +39,7 @@ export const SLOT_VALUES = ['12', '20'] as const
 export type Slot = (typeof SLOT_VALUES)[number]
 
 export const REASON_KIND_VALUES = ['quota', 'outage', 'timeout', 'no-sources', 'other'] as const
-/** 作れなかった理由の種類（使用量の上限・障害・時間切れ・読める記事が足りない・そのほか。docs/SPEC.md の 7.2） */
+/** 作れなかった理由の種類（使用量の上限・障害・時間切れ・読める資料が足りない・そのほか。docs/SPEC.md の 7.2） */
 export type ReasonKind = (typeof REASON_KIND_VALUES)[number]
 
 /** 決まった値の並びにある値か */
@@ -108,7 +108,7 @@ export interface Stakeholder {
   stance: Stance
   /** 1〜60字（立場の補足） */
   stanceNote: string | null
-  /** 1〜400字。null = 「今回集めた報道では、主張を確かめられなかった」（その時 stance は 'unknown'・stanceNote と reason は null） */
+  /** 1〜400字。null = 「今回読んだ資料では、主張を確かめられなかった」（その時 stance は 'unknown'・stanceNote と reason は null） */
   claim: string | null
   /** 1〜300字（主張の理由。claim が null の時は null） */
   reason: string | null

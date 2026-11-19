@@ -361,7 +361,7 @@ describe('テストの fetch の見張り（test/support/netGuard.ts）', () => 
   })
 })
 
-describe('Vault の連携の状態と、ツールの空の振り分け（B0）', () => {
+describe('Vault の連携の状態と、ツールの振り分け（B0・B3）', () => {
   it('連携した許可は通る。接続の無い許可・前の代の許可・連携していない呼び出しは断る（auth: HTTP 401）', async () => {
     const fake = new FakeFirebase()
     const { core, grant, clock } = await pairedCore(fake, { cid: 'caaa' })
@@ -374,12 +374,18 @@ describe('Vault の連携の状態と、ツールの空の振り分け（B0）',
     const stale = await core.callTool('topic_status', {}, { grant: { ...grant, gen: 'older' } })
     expect(stale).toMatchObject({ isError: true, auth: true })
     expect(stale.text).toContain('Topic Studio 側で連携が解除されています')
-    // ツールは B3 以降（いまは知らないツール。答えの頭に今の時刻）
-    const unknown = await core.callTool('topic_status', {}, { grant })
+    // 状態のツール（B3。答えの頭に今の時刻）。知らないツールは断る
+    const status = await core.callTool('topic_status', {}, { grant })
+    expect(status.isError).toBeUndefined()
+    expect(status.text).toMatch(/^いま 12:00（日本時間）\nTopic Studio コネクタ /)
+    expect(status.text).toContain('連携: 済み')
+    const unknown = await core.callTool('topic_nothing', {}, { grant })
     expect(unknown.isError).toBe(true)
     expect(unknown.auth).toBeUndefined()
-    expect(unknown.text).toBe('いま 12:00（日本時間）\n知らないツールです（topic_status）。ツールの一覧を読み直してください。')
+    expect(unknown.text).toBe('いま 12:00（日本時間）\n知らないツールです（topic_nothing）。ツールの一覧を読み直してください。')
     expect(await core.nightly()).toBe('ok')
+    // 夜の仕事が置いたやる事（写しの続き・毎日の決まりの読み）を alarm が済ませると、次のやる事は無い
+    clock.now += 2_000
     expect(await core.alarm()).toBeNull()
     // ［連携をすべて解除］: 1分後に読み直すと連携を外す
     fake.setConnector(null)

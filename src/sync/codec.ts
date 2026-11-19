@@ -1,7 +1,7 @@
 // Firestore の文書の形（docs/SPEC.md の 7.7 の「1件の文書の形」）。1記録 = 1文書（users/{uid}/{置き場}/{表名}:{id}）。
 // 記録はキーを並べ替えた JSON 文字列（stableStringify）にして json に入れる（端末の中の中身とそのまま比べられ、Firestore が扱えない値
 // （undefined など）にも困らない）。外側の欄は DS・NS の RecordDoc と同じ8つ（{ table, id, json, chunks: 0, deleted: false, hash, updated,
-// device }）にして、段階3のコネクタの書き込みの部品と同じ形にする（docs/SPEC.md の 7.7）。
+// device }）にして、段階3で作ったコネクタ（connector/）の書き込みの部品と同じ形にする（docs/SPEC.md の 7.7）。
 // DS の src/sync/codec.ts を写し、TS の形に直した（docs/SPEC.md の 7.8 の「部品」）:
 // - 分けた文書（_chunk・splitJson）を外した。どの記録も上限で 20万字以下で、DS の分ける境（25万字）に届かないため（7.7・7.9）
 // - 削除の印（json: null・deleted: true）を外した。TS は削除の印を書かずに日付で本当に消す（7.8 の「30日で消す」）。届いた文書の

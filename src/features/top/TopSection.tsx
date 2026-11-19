@@ -3,13 +3,18 @@
 // 画面を出した後に読んだ話題は、その場で淡くするだけで動かさない（read。指の下で一覧がずれないように）。
 // 話題が新しい形の記録の時は、その位置に押せない淡いカードを置く（呼ぶ側が総合・そのほかにだけ渡す。1.21）。
 // 見出しは <h2 tabIndex={-1}>（S・M の切り替えの列で移った時に、ここへフォーカスを移す。DS と同じ。設計: 段階2の 2.）。
-// testid は top-section（data-section）。総合とジャンルで同じ話題が2回出るので、読み上げでも区切りの見出しで分かるようにする（8. の 4）
+// testid は top-section（data-section）。総合とジャンルで同じ話題が2回出るので、読み上げでも区切りの見出しで分かるようにする（8. の 4）。
+// 段階3で、話題が1本も無い区切りの見出しの下の1行（emptyNote。L の国内・世界の列だけが渡す。作者に伺っている Q18 の今の決め方 A。
+// 段階3の設計の 3.4）を足した。全部を既読にした区切り（話題はあるが「既読 n件」に畳んだ）には出さない
 import { useId, type JSX } from 'react'
 import type { ShownTopic } from '../../domain/repair'
 import type { EditionView } from '../../store/appStore'
 import { ReadFold } from './ReadFold'
 import { NewerTopicCard, TopCard } from './TopCard'
 import { testIds } from './testIds'
+
+/** 話題が1本も無い区切りの1行の testid（E2E・単体のテストが探す） */
+export const SECTION_EMPTY_TEST_ID = 'top-section-empty'
 
 /** 出している版（ストアの opened.view が ready の物） */
 export type ReadyView = Extract<EditionView, { kind: 'ready' }>
@@ -59,9 +64,21 @@ export interface TopSectionProps {
   id?: string
   /** 見出しの id（切り替えの列で移った時にフォーカスを移す） */
   headingId?: string
+  /** 話題が1本も無い時に、見出しの下に出す1行（L の国内・世界の列だけ。段階3の設計の 3.4） */
+  emptyNote?: string | null
 }
 
-export function TopSection({ list, section, title, note, items, onOpen, id, headingId }: TopSectionProps): JSX.Element {
+export function TopSection({
+  list,
+  section,
+  title,
+  note,
+  items,
+  onOpen,
+  id,
+  headingId,
+  emptyNote,
+}: TopSectionProps): JSX.Element {
   const ownHeadingId = useId()
   const headId = headingId ?? ownHeadingId
   const shown = items.filter((it) => it.kind === 'newer' || !list.sunk.has(it.topic.id))
@@ -90,6 +107,11 @@ export function TopSection({ list, section, title, note, items, onOpen, id, head
         <span className="top-section-title">{title}</span>
         {note ? <span className="top-section-note">（{note}）</span> : null}
       </h2>
+      {items.length === 0 && emptyNote ? (
+        <p className="top-section-empty muted small" data-testid={SECTION_EMPTY_TEST_ID}>
+          {emptyNote}
+        </p>
+      ) : null}
       {shown.length ? <ol className="top-cards">{shown.map(card)}</ol> : null}
       <ReadFold editionId={list.editionId} section={section} count={folded.length}>
         <ol className="top-cards">{folded.map(card)}</ol>

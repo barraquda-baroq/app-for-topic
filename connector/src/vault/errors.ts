@@ -1,6 +1,8 @@
-// コネクタの失敗（Claude に返す日本語の説明つき。NS の connector/src/vault/errors.ts を写し、名前と文を TS の物にした。TS の種類は B3 以降で足す）。
+// コネクタの失敗（Claude に返す日本語の説明つき。NS の connector/src/vault/errors.ts を写し、名前と文を TS の物にした）。
 // unpaired・identity_lost は認証の問題: MCP の呼び出しは HTTP 401 にして、claude.ai に接続し直してもらう。
 // それ以外はツールの結果（isError）として、何をすればよいかを返す。
+// TS の種類（B3。設計の 1.1 の「誤り」）: 回（run_*・slot_taken）・辞書の作り直し・下書き（draft_*。中身は B5）・取りに行く所（fetch_*。中身は B4）。
+// 種類の名前はログに出る（code）。回の種類（kind）で分けない（D21・設計の 1.10）
 
 export type ConnectorErrorCode =
   | 'unpaired'
@@ -18,6 +20,35 @@ export type ConnectorErrorCode =
   | 'catching_up'
   | 'permission'
   | 'invalid'
+  /** 回が見つからない（始めていない・期限で消えた） */
+  | 'run_unknown'
+  /** 古い回（始めて12時間を過ぎた） */
+  | 'run_expired'
+  /** 終わった回（版か作れなかった印を足した後） */
+  | 'run_done'
+  /** その回の種類では使えない道具 */
+  | 'run_kind'
+  /** 同じ枠の版の回が動いている（最後の呼び出しが10分以内） */
+  | 'run_busy'
+  /** 1日に始められる回の数を超えた（種類を分けない合計。候補を集める回の数も） */
+  | 'run_limit'
+  /** その枠の版がもうある */
+  | 'slot_taken'
+  /** 辞書を作り直している（今の表が無い間だけ） */
+  | 'dictionary_rebuilding'
+  /** 下書きが無い・数を超えた・照合の後で置き換えられない・読む前の照合・締め切りの後（B5） */
+  | 'draft_unknown'
+  | 'draft_limit'
+  | 'draft_state'
+  | 'draft_unread'
+  | 'draft_deadline'
+  /** 取りに行けない（robots.txt・AI の意思表示・規約・確認画面）・混んでいる・PDF・本文が短い・数を超えた・失敗した（B4） */
+  | 'fetch_refused'
+  | 'fetch_busy'
+  | 'fetch_pdf'
+  | 'fetch_short'
+  | 'fetch_limit'
+  | 'fetch_failed'
 
 export class ConnectorError extends Error {
   readonly code: ConnectorErrorCode
@@ -47,6 +78,11 @@ export const MESSAGES = {
   unavailable: '一時的に Topic Studio のクラウドに接続できません。少し待ってから、もう一度試してください。',
   permission:
     'Topic Studio のクラウドに拒まれました（アクセスルールが古い可能性）。Mac か Windows で npm run deploy を実行して、アクセスルールを公開し直してください。',
+  runUnknown: 'この回は見つかりません（runId が違うか、期限で消えました）。回を始め直してください（topic_begin_run）。',
+  runExpired: '古い回です（始めて12時間を過ぎました）。回を始め直してください（topic_begin_run）。',
+  runDone:
+    'この回は終わりました（版か作れなかった印を足しました）。続けて作業する時は、回を始め直してください（topic_begin_run）。',
+  dictionaryRebuilding: '辞書を作り直しています（初めての取り込みの途中）。少し待ってから、もう一度試してください。',
 } as const
 
 export function modelMismatchMessage(cloud: number | null, mine: number): string {
