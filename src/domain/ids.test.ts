@@ -1,7 +1,9 @@
 // 名札（id）の作り方と形（docs/SPEC.md の 7.7 の「名札」・16.3）: 版の id が端末の時差に左右されない、話題の指紋が threadId・createdAt などで
 // 変わらず emphasis が変わると変わる、訂正の id が話題の id で始まり同じ text なら同じ、語の id が全角・半角・大文字・空白の違いで同じ、
-// 短い id（話題 p:＋8字・版 e:）と解き方、30日で消せる id の形（ルールの expirableRecord と同じ）
+// 短い id（話題 p:＋8字・版 e:）と解き方、30日で消せる id の形（ルールの expirableRecord と同じ）。
+// 段階3: 回の id（'r{YYYYMMDDHHmm}-{4字}'。日本時間・乱数は呼ぶ側。作り物の版の runId と同じ形）
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { makeFakeEdition, makeFakeMonth } from '../test/fixtures/fakeEditions'
 import { makeSampleTopic } from '../test/fixtures/sampleTopic'
 import {
   correctionIdOf,
@@ -20,6 +22,8 @@ import {
   readIdOf,
   resolveEditionRef,
   resolveTopicRef,
+  RUN_ID_RE,
+  runIdAt,
   termIdOf,
   termPackIdOf,
   topicFingerprint,
@@ -266,5 +270,44 @@ describe('30日で消せる文書の id（ルールの expirableRecord と同じ
     expect(isExpiredDocId('corrections:2026-10-02-12-abcdefgh-12345678', now)).toBe(false)
     expect(isExpiredDocId('termPacks:2026-10-01-12-abcdefgh', now)).toBe(false)
     expect(isExpiredDocId('editions:2026-02-30-12', now)).toBe(false)
+  })
+})
+
+describe('回の id（段階3）', () => {
+  const jst = (y: number, m: number, d: number, h = 0, min = 0) => Date.UTC(y, m - 1, d, h - 9, min)
+
+  it("'r' ＋ 始めた時刻（日本時間の YYYYMMDDHHmm）＋ '-' ＋ 乱数4字", () => {
+    expect(runIdAt(jst(2026, 11, 19, 10, 16), 'a1b2')).toBe('r202611191016-a1b2')
+    expect(runIdAt(jst(2026, 11, 20, 0, 5), '0000')).toBe('r202611200005-0000')
+    expect(RUN_ID_RE.test('r202611191016-a1b2')).toBe(true)
+    for (const bad of ['r20261119101-a1b2', 'r202611191016-A1B2', 'r202611191016-a1b', 'x202611191016-a1b2', 'r202611191016a1b2'])
+      expect([bad, RUN_ID_RE.test(bad)]).toEqual([bad, false])
+  })
+
+  it('端末の時差に左右されない', () => {
+    const t = jst(2026, 11, 19, 23, 59)
+    const ids = ['Asia/Tokyo', 'America/Los_Angeles'].map((tz) => {
+      vi.stubEnv('TZ', tz)
+      return runIdAt(t, 'zz99')
+    })
+    vi.unstubAllEnvs()
+    expect(ids).toEqual(['r202611192359-zz99', 'r202611192359-zz99'])
+  })
+
+  it('乱数が [0-9a-z] の4字でなければ投げる（domain は乱数を持たない）', () => {
+    for (const bad of ['', 'abc', 'abcde', 'AB12', 'ab-1']) expect(() => runIdAt(0, bad)).toThrow(RangeError)
+  })
+
+  it('作り物の版の runId も同じ形', () => {
+    const ed = makeFakeEdition({ date: '2026-11-15', slot: '12', seed: 'test' })
+    const month = makeFakeMonth({ until: '2026-11-15', days: 3 })
+    const runIds = [
+      ed.edition,
+      ...ed.topics,
+      ...month.editions.map((e) => e.edition),
+      ...month.editionFails,
+      ...month.corrections,
+    ].map((r) => r.runId)
+    for (const r of runIds) expect([r, RUN_ID_RE.test(r)]).toEqual([r, true])
   })
 })

@@ -11,6 +11,7 @@ import { pressKnownTerm } from '../domain/known'
 import type { CorrectionRecord, KnownTerm, ReadMark, Topic } from '../domain/types'
 import { FakeCloud, FakeDevice, settle, type FakeDeviceOptions } from '../test/fakeCloud'
 import { FAKE_MODEL, RULING_JP_KEY, fakeRecordsOf, makeFakeEdition, makeFakeMonth } from '../test/fixtures/fakeEditions'
+import { DATA_MODEL } from './appVersion'
 import { encodeRecord, recordDocOf } from './codec'
 
 const MIN = 60_000
@@ -681,7 +682,7 @@ describe('持ち主・データの形の版（docs/SPEC.md の 7.8 の「持ち�
 
   it('データの形の版が高い → 受け取りは続け、送らない（送信待ちに残る）', async () => {
     const cloud = newCloud()
-    cloud.model = 2
+    cloud.model = DATA_MODEL + 1
     const a = await started(cloud, 'A')
     expect(a.outdated).toBe(true)
     await a.know({ ...press, asOf: null })
@@ -692,6 +693,6 @@ describe('持ち主・データの形の版（docs/SPEC.md の 7.8 の「持ち�
     seed(cloud, fake)
     await a.receive()
     expect((await a.shownEdition(fake.edition.id)).kind).toBe('ready')
-    expect(cloud.model).toBe(2)
+    expect(cloud.model).toBe(DATA_MODEL + 1)
   })
 })

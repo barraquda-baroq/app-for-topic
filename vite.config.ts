@@ -1,12 +1,48 @@
 /// <reference types="vitest/config" />
 // 開発サーバー・ビルド・PWA・単体テストの設定。DS（Diary Studio）の vite.config.ts を写し、名前と manifest を TS の物にした
-// （DS は NS の物から、ネイティブ用のビルドと Claude 用のコネクタの部分を外した。docs/SPEC.md の 3.・14.6）
-import { readFileSync } from 'node:fs'
+// （DS は NS の物から、ネイティブ用のビルドと Claude 用のコネクタの部分を外した。docs/SPEC.md の 3.・14.6）。段階3で、Claude 用の
+// コネクタの場所（__CONNECTOR_ORIGIN__）を NS の vite.config.ts から戻した
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, transformWithEsbuild, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA, type ManifestOptions, type VitePWAOptions } from 'vite-plugin-pwa'
+import { normalizeOrigin } from './src/claude/pairing'
+
+/**
+ * Claude 用のコネクタ（Cloudflare Worker）の場所。ビルドの時に決めて埋め込む（URL からは受け取らない。docs/CONNECTOR.md。NS と同じ）。
+ * connector.local.json（npm run connector:setup が書く。リポジトリには入れない）の origin、無ければ VITE_CONNECTOR_ORIGIN、
+ * どちらも無ければ空（設定の「Claude との連携」は「コネクタはまだ用意されていません」、連携の画面は先へ進まない）。
+ * file・env はテストで差し替える（既定はリポジトリの直下の connector.local.json と process.env）
+ */
+export function connectorOrigin(
+  build: boolean,
+  file: URL = new URL('./connector.local.json', import.meta.url),
+  env: Record<string, string | undefined> = process.env,
+): string {
+  let raw = ''
+  if (existsSync(file)) {
+    try {
+      const v = JSON.parse(readFileSync(file, 'utf8')) as { origin?: unknown }
+      raw = typeof v.origin === 'string' ? v.origin : ''
+    } catch {
+      console.warn('connector.local.json を読めませんでした（コネクタ未設定として続けます）')
+    }
+  }
+  if (!raw) raw = env.VITE_CONNECTOR_ORIGIN ?? ''
+  raw = raw.trim()
+  if (!raw) return ''
+  // アプリの画面・コネクタと同じ決まり（src/claude/pairing.ts）: https の origin（開発中は localhost も）だけ
+  const origin = normalizeOrigin(raw)
+  if (!origin) console.warn(`コネクタの origin が正しくありません（https://… の origin だけ）: ${raw}`)
+  // 公開するビルドには、手元のコネクタ（http://localhost…）を入れない
+  if (build && origin.startsWith('http:')) {
+    console.warn(`手元のコネクタの URL は公開するアプリに入れません: ${origin}`)
+    return ''
+  }
+  return origin
+}
 
 /** index.html の <script data-inline="ファイル">…</script> */
 const INLINE_SCRIPT = /<script data-inline="([^"]+)">([\s\S]*?)<\/script>/g
@@ -96,7 +132,11 @@ function inlineLaunchScript(): Plugin {
   }
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  define: {
+    // Claude 用のコネクタの origin（src/env.d.ts。connectorOrigin）。公開するビルドには https の物だけ
+    __CONNECTOR_ORIGIN__: JSON.stringify(connectorOrigin(command === 'build')),
+  },
   // 相対パスで出力しておくと、静的ホスティングにそのまま載せられる（HashRouter。docs/SPEC.md の 3.）
   base: './',
   // ログイン・持ち主の確かめ（Firebase）は使う時に読み込む。開発サーバーで途中に依存を最適化し直して再読み込みしないよう、先にまとめておく
@@ -120,4 +160,4 @@ export default defineConfig({
     // 持ち主の関所・アクセスルール・同期のテストは Firebase エミュレーターの中で動かす（npm run test:sync。docs/SPEC.md の 14.7・16.3）
     exclude: ['src/**/*.emu.test.ts', 'node_modules/**'],
   },
-})
+}))

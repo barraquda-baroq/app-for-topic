@@ -1,11 +1,71 @@
 // @vitest-environment node
 // vite.config.ts の確かめ（DS の scripts/vite-config.test.mjs から。DS は NS の物から、ビルドの日時・ネイティブ用のビルドの部分を外した）
-// と、manifest が指すアイコンの絵（scripts/icon-art.mjs と、それから書き出した public/ の画像）の確かめ
-import { existsSync, readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
-import config, { PWA_ICONS, PWA_MANIFEST, PWA_WORKBOX, inlineScripts } from '../vite.config.ts'
+// と、manifest が指すアイコンの絵（scripts/icon-art.mjs と、それから書き出した public/ の画像）の確かめ。段階3で、Claude 用のコネクタの
+// 場所（__CONNECTOR_ORIGIN__。NS の vite.config.ts の connectorOrigin）を足した
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import config, { PWA_ICONS, PWA_MANIFEST, PWA_WORKBOX, connectorOrigin, inlineScripts } from '../vite.config.ts'
 import { BACKGROUND, ORANGE, faviconSvg, iconSvg } from './icon-art.mjs'
+
+/** vite の設定を、コマンドとモードを指定して作る（設定は関数） */
+const resolve = (command, mode = command === 'build' ? 'production' : 'development') =>
+  config({ command, mode, isSsrBuild: false, isPreview: false })
+
+// Claude 用のコネクタ（Cloudflare Worker）の origin をビルドの時に決めて埋め込む（URL からは受け取らない。docs/CONNECTOR.md）
+describe('connectorOrigin（__CONNECTOR_ORIGIN__）', () => {
+  const dirs = []
+  /** 作り物の connector.local.json（中身 text。null なら無いファイル）の URL */
+  const local = (text) => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'ts-connector-'))
+    dirs.push(dir)
+    const file = path.join(dir, 'connector.local.json')
+    if (text !== null) writeFileSync(file, text)
+    return pathToFileURL(file)
+  }
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
+    vi.restoreAllMocks()
+  })
+  const quiet = () => vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+  it('connector.local.json の origin を、無ければ VITE_CONNECTOR_ORIGIN を使う。どちらも無ければ空', () => {
+    const origin = 'https://topic-studio-connector.example.workers.dev'
+    expect(connectorOrigin(true, local(JSON.stringify({ origin })), {})).toBe(origin)
+    // connector.local.json が先（環境変数は使わない）
+    expect(connectorOrigin(true, local(JSON.stringify({ origin })), { VITE_CONNECTOR_ORIGIN: 'https://other.example' })).toBe(
+      origin,
+    )
+    expect(connectorOrigin(true, local(null), { VITE_CONNECTOR_ORIGIN: `${origin}/` })).toBe(origin)
+    expect(connectorOrigin(true, local(null), {})).toBe('')
+    expect(connectorOrigin(false, local(JSON.stringify({ origin: '  ' })), {})).toBe('')
+  })
+
+  it('https の origin（開発中は localhost も）だけ。パス付き・http は空にする。公開するビルドには手元のコネクタを入れない', () => {
+    const warn = quiet()
+    expect(connectorOrigin(true, local(null), { VITE_CONNECTOR_ORIGIN: 'https://example.com/mcp' })).toBe('')
+    expect(connectorOrigin(true, local(null), { VITE_CONNECTOR_ORIGIN: 'http://example.com' })).toBe('')
+    expect(connectorOrigin(false, local(null), { VITE_CONNECTOR_ORIGIN: 'http://127.0.0.1:8787' })).toBe('http://127.0.0.1:8787')
+    expect(connectorOrigin(true, local(null), { VITE_CONNECTOR_ORIGIN: 'http://127.0.0.1:8787' })).toBe('')
+    expect(warn).toHaveBeenCalled()
+  })
+
+  it('読めない connector.local.json は「コネクタ未設定」として続ける', () => {
+    const warn = quiet()
+    expect(connectorOrigin(true, local('{ not json'), {})).toBe('')
+    expect(warn.mock.calls.join('\n')).toContain('connector.local.json を読めませんでした')
+  })
+
+  it('設定の define に、文字列として埋め込む（ビルドでも開発サーバーでも）', () => {
+    for (const command of ['build', 'serve']) {
+      const v = JSON.parse(resolve(command).define.__CONNECTOR_ORIGIN__)
+      expect(typeof v).toBe('string')
+      expect(v === '' || v.startsWith('https://') || command === 'serve').toBe(true)
+    }
+  })
+})
 
 // 外観と起動アニメーション（src/launch/launch.js）を index.html に埋め込む（読み込みを増やさず、アプリの本体より先に動かす）
 describe('inlineScripts（index.html の <script data-inline>）', () => {
@@ -64,7 +124,9 @@ describe('PWA の manifest', () => {
   })
 
   it('PWA のプラグインに入っている', () => {
-    const names = config.plugins.flat(Infinity).map((p) => p && p.name)
+    const names = resolve('serve')
+      .plugins.flat(Infinity)
+      .map((p) => p && p.name)
     expect(names).toContain('vite-plugin-pwa')
     expect(names).toContain('topic-studio:inline-launch-script')
   })
@@ -117,7 +179,8 @@ describe('アイコンのオレンジと、書き出したアイコン', () => {
     expect(svg).toContain('stop-color="#eab288"')
     expect(svg).toContain('stop-color="#1e1005"')
     // DS の青（暗い案・初めの案・地の光）が残っていない
-    for (const old of ['#52b6f5', '#e0ebf5', '#93c5f5', '#5cc0ff', '#eaf5ff', '#9ccfff', '#0a1422']) expect(svg).not.toContain(old)
+    for (const old of ['#52b6f5', '#e0ebf5', '#93c5f5', '#5cc0ff', '#eaf5ff', '#9ccfff', '#0a1422'])
+      expect(svg).not.toContain(old)
     expect(BACKGROUND).toBe('#050607')
   })
 

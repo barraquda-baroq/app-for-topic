@@ -1,11 +1,36 @@
-// 社の名前の決まった一覧と、その社の記事が読める所（配信先の新聞社のサイトを含む）・読んだ所（via）のホスト名（docs/SPEC.md の 4.8・7.1）。
-// アプリと段階3のコネクタで同じ物を使う。一覧は書き方をそろえる表で、一覧に無い社（Yahoo!ニュースや Google ニュースの束に出る地方の社など）も、
-// 名前のまま outlet・outletNames に入れてよい。その時の出典は via の URL に限る（一覧に無い社のホストはリンクにできないため）。
-// - コネクタ: url のホストが outlet か via のホストのどれにも当たらない出典を断る（記事の中のリンクや作り出した URL を出典にしない。D23・4.6）
-// - アプリ: 同じ決まりに当たらない URL はリンクにせず文として出す（一覧を後で足した時の古いアプリも同じ。src/domain/repair.ts）
+// 社の名前の決まった一覧と、その社の資料が読める所・読んだ所（via）のホスト名・出典の書き方（docs/SPEC.md の 4.8・5.10・7.1）。
+// アプリと段階3のコネクタで同じ物を使う。一覧は書き方をそろえる表で、一覧に無い社も、名前のまま outlet・outletNames に入れてよい。
+// その時の出典は via の URL に限る（一覧に無い社のホストはリンクにできないため）。
+// - コネクタ: url のホストが outlet か via のホストのどれにも当たらない出典を断る（記事の中のリンクや作り出した URL を出典にしない。D23・4.6）。
+//   段階3では、出典の社を資料の控えのホストから引く（src/domain/assemble.ts）
+// - アプリ: 同じ決まりに当たらない URL はリンクにせず文として出す（一覧を後で足した時の古いアプリも同じ。src/domain/repair.ts）。
+//   出典の表示（「…を加工して作成」など）は、社の credit から作る（src/domain/credit.ts）
 // 一覧は差し替えられる形（OutletDirectory）にする。作り物の版では作り物の社の一覧を使う（src/test/fixtures/fakeOutlets.ts。docs/SPEC.md の 16.3）。
 // ホストは小文字の決まった名前だけで比べる（www の有る無しも別のホスト。4.8 の「許可するドメイン」と同じく、決まった名前だけ）。
+// 出どころは部品ではなく data で持つ（段階3の設計の 1.7 の (1)）。部品は社の名前を知らず、この一覧と connector/src/fetch/sources.ts だけを読む。
+// 許しが取れた社を足す時は、ここに名前・ホスト（一覧と本文の全部）・credit を1行足す（docs/CONNECTOR.md の「出どころを足す時」）。
 import { normalizeIdText } from './ids'
+
+/**
+ * 出典の書き方（社ごと。出どころの規約の出典の書き方。{主体} は src/domain/credit.ts の CREDIT_PROCESSOR）:
+ * - site: 出典：{siteName}（{url}）を加工して作成（加工: {主体}）
+ * - title: 出典：「{title}」（{org}）（{url}）を加工して作成（加工: {主体}）
+ * - pdl: 出典：{siteName}（{url}）、PDL1.0（{PDL1.0 の URL}）を加工して作成（加工: {主体}）。独自の出典の書き方の無い府省（PDL1.0 の既定の形）
+ * - jma: 出典：気象庁ホームページ（{url}）を加工して作成（加工: {主体}。編集の責任は {主体} にあります）
+ * - cc-by: 出典：{outlet}「{title}」（著者: {author}）（{url}）、{license}（{licenseUrl}）。{主体}が要約・翻訳した（著者が無ければ著者の括弧を書かない）
+ */
+export type CreditRule =
+  | { form: 'site'; siteName: string }
+  | { form: 'title'; org: string }
+  | { form: 'pdl'; siteName: string }
+  | { form: 'jma' }
+  | { form: 'cc-by'; license: string; licenseUrl: string }
+
+/** 出典の書き方の形（5つ） */
+export const CREDIT_FORMS = ['site', 'title', 'pdl', 'jma', 'cc-by'] as const satisfies readonly CreditRule['form'][]
+
+/** リンクの開き方（既定 'new-window'。'no-link' はリンクにせず文で出す。許しの条件でリンクを張れない社のため） */
+export type LinkOpen = 'new-window' | 'no-link'
 
 /** 一覧の1つ（社か、読んだ所） */
 export interface OutletEntry {
@@ -13,8 +38,12 @@ export interface OutletEntry {
   name: string
   /** ほかの書き方（そろえる前の名前。書き方をそろえる時に使う） */
   aliases?: readonly string[]
-  /** その社の記事が読める所のホスト名（小文字。配信先の新聞社のサイトを含む） */
+  /** その社の資料が読める所のホスト名（小文字。一覧を取るホストと本文を取るホストの全部） */
   hosts: readonly string[]
+  /** 出典の書き方と「加工して作成」の書き方（無い社は出典の表示なし。今の8つは全部持つ） */
+  credit?: CreditRule
+  /** リンクの開き方（省くと 'new-window'） */
+  linkOpen?: LinkOpen
 }
 
 /** 社の名前の一覧と、読んだ所の一覧 */
@@ -26,6 +55,10 @@ export interface OutletList {
 /** 引きやすくした一覧（createOutletDirectory で作る） */
 export interface OutletDirectory {
   list: OutletList
+  /** 決まった書き方 → 一覧の1つ（社） */
+  outletEntries: ReadonlyMap<string, OutletEntry>
+  /** 決まった書き方 → 一覧の1つ（読んだ所） */
+  viaEntries: ReadonlyMap<string, OutletEntry>
   /** そろえた名前 → 決まった書き方（社） */
   outletNames: ReadonlyMap<string, string>
   /** そろえた名前 → 決まった書き方（読んだ所） */
@@ -54,29 +87,84 @@ export function createOutletDirectory(list: OutletList): OutletDirectory {
   }
   const o = names(list.outlets)
   const v = names(list.vias)
-  return { list, outletNames: o.byName, viaNames: v.byName, outletHosts: o.hosts, viaHosts: v.hosts }
+  const entries = (list: readonly OutletEntry[]) => new Map(list.map((e) => [e.name, e]))
+  return {
+    list,
+    outletEntries: entries(list.outlets),
+    viaEntries: entries(list.vias),
+    outletNames: o.byName,
+    viaNames: v.byName,
+    outletHosts: o.hosts,
+    viaHosts: v.hosts,
+  }
 }
 
 /**
- * 段階3の定期実行が読む社の一覧（docs/SPEC.md の 4.8 の「許可するドメイン」で読めた・読めない社。決まった書き方・別名は開発が決めた仮の物で、
- * 段階3の依頼文と合わせて直す）。読めない社（相手のサイトがロボット対策で断る）も、Yahoo!ニュースなどで読んだ時の outlet の書き方をそろえるので、
- * 一覧に入れる。Google ニュースの束は候補集めに使う所で、記事を読む所ではないので via にしない
+ * 段階3の定期実行が読む出どころの一覧（府省・庁の7つと Global Voices。作者の問2の答えで済ませた出どころ探し（2026-11-19）で「条件つきで
+ * 使える」とした物。段階3の設計の 1.7 の (1)）。名前は出典に書く社の名前、credit は各社の出典の書き方（内閣府は独自の書き方が無いので PDL1.0 の
+ * 既定の形。名前はリンクの決まりの「『内閣府ホームページ』へのリンクであることを明記」に合わせる）。リンクの開き方は8つとも新しい窓
+ * （内閣府・国土交通省のリンクの決まり）。読んだ所（via）を通す出どころは無いので vias は空。取り方は connector/src/fetch/sources.ts
  */
 export const DEFAULT_OUTLET_LIST: OutletList = {
   outlets: [
-    { name: 'NHK', aliases: ['NHKニュース', '日本放送協会'], hosts: ['www.nhk.or.jp', 'www3.nhk.or.jp', 'news.web.nhk'] },
-    { name: '共同通信', aliases: ['共同'], hosts: ['kumanichi.com'] },
-    { name: '時事通信', aliases: ['時事', '時事ドットコム'], hosts: ['www.jiji.com'] },
-    { name: '毎日新聞', aliases: ['毎日'], hosts: ['mainichi.jp'] },
-    { name: '朝日新聞', aliases: ['朝日'], hosts: ['www.asahi.com'] },
-    { name: '読売新聞', aliases: ['読売'], hosts: ['www.yomiuri.co.jp'] },
-    { name: '日本経済新聞', aliases: ['日経', '日経新聞'], hosts: ['www.nikkei.com'] },
-    { name: '東京新聞', aliases: [], hosts: ['www.tokyo-np.co.jp'] },
-    { name: 'AP通信', aliases: ['AP', 'Associated Press'], hosts: ['apnews.com'] },
-    { name: 'ロイター', aliases: ['Reuters', 'ロイター通信'], hosts: ['www.reuters.com'] },
-    { name: 'BBC', aliases: ['BBC News', 'BBCニュース'], hosts: ['www.bbc.com', 'feeds.bbci.co.uk'] },
+    {
+      name: '首相官邸',
+      aliases: ['官邸', '首相官邸ホームページ'],
+      hosts: ['www.kantei.go.jp'],
+      credit: { form: 'site', siteName: '首相官邸ホームページ' },
+      linkOpen: 'new-window',
+    },
+    {
+      name: '内閣府',
+      aliases: ['内閣府ホームページ'],
+      hosts: ['www.cao.go.jp'],
+      credit: { form: 'pdl', siteName: '内閣府ホームページ' },
+      linkOpen: 'new-window',
+    },
+    {
+      name: 'デジタル庁',
+      aliases: [],
+      hosts: ['www.digital.go.jp'],
+      credit: { form: 'title', org: 'デジタル庁' },
+      linkOpen: 'new-window',
+    },
+    {
+      name: '厚生労働省',
+      aliases: ['厚労省', '厚生労働省ホームページ'],
+      hosts: ['www.mhlw.go.jp'],
+      credit: { form: 'site', siteName: '厚生労働省ホームページ' },
+      linkOpen: 'new-window',
+    },
+    {
+      name: '消防庁',
+      aliases: ['総務省消防庁', '消防庁ホームページ'],
+      hosts: ['www.fdma.go.jp'],
+      credit: { form: 'site', siteName: '消防庁ホームページ' },
+      linkOpen: 'new-window',
+    },
+    {
+      name: '気象庁',
+      aliases: ['気象庁ホームページ'],
+      hosts: ['www.data.jma.go.jp'],
+      credit: { form: 'jma' },
+      linkOpen: 'new-window',
+    },
+    {
+      name: '国土交通省',
+      aliases: ['国交省', '国土交通省ウェブサイト'],
+      hosts: ['www.mlit.go.jp'],
+      credit: { form: 'site', siteName: '国土交通省ウェブサイト' },
+      linkOpen: 'new-window',
+    },
+    {
+      name: 'Global Voices',
+      aliases: [],
+      hosts: ['globalvoices.org'],
+      credit: { form: 'cc-by', license: 'CC BY 3.0', licenseUrl: 'https://creativecommons.org/licenses/by/3.0/' },
+      linkOpen: 'new-window',
+    },
   ],
-  vias: [{ name: 'Yahoo!ニュース', aliases: ['Yahoo!', 'Yahoo! JAPAN ニュース', 'ヤフーニュース'], hosts: ['news.yahoo.co.jp'] }],
+  vias: [],
 }
 
 /** アプリとコネクタがふだん使う一覧 */
@@ -95,6 +183,23 @@ export function canonicalViaName(name: string, dir: OutletDirectory = DEFAULT_OU
 /** 一覧にある社か（決まった書き方か別名） */
 export function isKnownOutlet(name: string, dir: OutletDirectory = DEFAULT_OUTLETS): boolean {
   return dir.outletNames.has(normalizeIdText(name))
+}
+
+/** 一覧の社（決まった書き方か別名で引く。一覧に無い社は null） */
+export function outletEntryOf(name: string, dir: OutletDirectory = DEFAULT_OUTLETS): OutletEntry | null {
+  return dir.outletEntries.get(canonicalOutletName(name, dir)) ?? null
+}
+
+/** そのホストで資料が読める社の決まった書き方（一覧の順。1つのホストに社が2つ以上ある時もある） */
+export function outletsOfHost(host: string, dir: OutletDirectory = DEFAULT_OUTLETS): string[] {
+  const h = host.toLowerCase()
+  return [...dir.outletHosts].filter(([, hosts]) => hosts.has(h)).map(([name]) => name)
+}
+
+/** そのホストの読んだ所の決まった書き方（一覧の順） */
+export function viasOfHost(host: string, dir: OutletDirectory = DEFAULT_OUTLETS): string[] {
+  const h = host.toLowerCase()
+  return [...dir.viaHosts].filter(([, hosts]) => hosts.has(h)).map(([name]) => name)
 }
 
 /** 一覧のどこかにあるホストか（社か読んだ所） */
@@ -144,10 +249,25 @@ export function isAllowedSourceUrl(
   return host !== null && sourceHosts(source, dir).has(host)
 }
 
-/** 画面でリンクにする URL（使ってよい URL なら記録のまま、だめなら null で、文として出す） */
+/**
+ * 出典のリンクの開き方（URL のある所の物。読んだ所の URL なら読んだ所の、ほかは社の。一覧に無い所・書いていない所は 'new-window'）
+ */
+export function linkOpenOf(source: { outlet: string; via: string | null }, dir: OutletDirectory = DEFAULT_OUTLETS): LinkOpen {
+  const entry =
+    source.via !== null
+      ? dir.viaEntries.get(canonicalViaName(source.via, dir))
+      : dir.outletEntries.get(canonicalOutletName(source.outlet, dir))
+  return entry?.linkOpen ?? 'new-window'
+}
+
+/**
+ * 画面でリンクにする URL（使ってよい URL なら記録のまま、だめなら null で、文として出す）。リンクの開き方が 'no-link' の所も null
+ * （許しの条件でリンクを張れない社。URL は文で出す。段階3の設計の 1.7 の (1)）
+ */
 export function sourceLinkUrl(
   source: { outlet: string; url: unknown; via: string | null },
   dir: OutletDirectory = DEFAULT_OUTLETS,
 ): string | null {
+  if (linkOpenOf(source, dir) === 'no-link') return null
   return isAllowedSourceUrl(source, dir) ? (source.url as string) : null
 }

@@ -11,6 +11,7 @@ import { decodeDoc } from '../sync/codec'
 const admin = vi.hoisted(() => ({
   adminWriteRecords: vi.fn(async () => {}),
   adminCreateOwner: vi.fn(async () => {}),
+  adminWriteConnector: vi.fn(async () => {}),
   adminGoogleUser: vi.fn(async (sub: string) => `uid-of-${sub}`),
 }))
 vi.mock('./emulatorAdmin', () => admin)
@@ -149,12 +150,35 @@ describe('エミュレーターに書く（seedEmulator・seedTargetUid）', () 
     expect(admin.adminCreateOwner).not.toHaveBeenCalled()
     await seedEmulator('u2', { nowMs: NOW, days: 3, owner: true })
     expect(admin.adminCreateOwner).toHaveBeenCalledWith('u2')
+    expect(admin.adminWriteConnector).not.toHaveBeenCalled()
+  })
+
+  it('connector の時は、持ち主の記録と連携の記録（コネクタの匿名のアカウント）も書く', async () => {
+    await seedEmulator('u3', { nowMs: NOW, days: 3, owner: true, connector: 'anon3' })
+    expect(admin.adminCreateOwner).toHaveBeenCalledWith('u3')
+    expect(admin.adminWriteConnector).toHaveBeenCalledWith('anon3')
+    expect(admin.adminWriteRecords).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['持ち主の記録を書かない', { connector: 'anon4' }, /持ち主の記録も/],
+    ['uid の形が違う', { owner: true, connector: 'a/b' }, /英数字/],
+    ['書く先と同じアカウント', { owner: true, connector: 'u4' }, /同じです/],
+  ])('connector で%sの時は、何も書かずに断る', async (_, opts, msg) => {
+    await expect(seedEmulator('u4', { nowMs: NOW, days: 3, ...opts })).rejects.toThrow(msg)
+    expect(admin.adminCreateOwner).not.toHaveBeenCalled()
+    expect(admin.adminWriteConnector).not.toHaveBeenCalled()
+    expect(admin.adminWriteRecords).not.toHaveBeenCalled()
   })
 
   it('今より後になる時は何も書かない', async () => {
     await expect(seedEmulator('u1', { nowMs: NOW, days: 3, until: '2026-11-16' })).rejects.toThrow(RangeError)
     expect(admin.adminWriteRecords).not.toHaveBeenCalled()
     expect(admin.adminCreateOwner).not.toHaveBeenCalled()
+    await expect(
+      seedEmulator('u1', { nowMs: NOW, days: 3, until: '2026-11-16', owner: true, connector: 'anon1' }),
+    ).rejects.toThrow(RangeError)
+    expect(admin.adminWriteConnector).not.toHaveBeenCalled()
   })
 
   it('書く先: uid はそのまま、無ければ sub（既定 dev-author）の仮の Google アカウント', async () => {

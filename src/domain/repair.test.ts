@@ -1,7 +1,8 @@
 // 読み取りの確かめ（表示用の写し。docs/SPEC.md の 7.1・7.8・16.3）: 知らない値・知らない欄・v: 2 を消さない・書き戻さない（受け取った記録は
-// 変えない）、強調の合わない物は写しから捨てる（壊れた要素を出さない時も番号を詰めない）、知らないホストの URL はリンクにしない
+// 変えない）、強調の合わない物は写しから捨てる（壊れた要素を出さない時も番号を詰めない）、知らないホストの URL はリンクにしない。
+// 段階3: 出典の著者（author）は文字か null、リンクにしない社（linkOpen: 'no-link'）の URL はリンクにしない
 import { describe, expect, it } from 'vitest'
-import { FAKE_OUTLETS } from '../test/fixtures/fakeOutlets'
+import { FAKE_CREDIT_OUTLETS, FAKE_OUTLETS } from '../test/fixtures/fakeOutlets'
 import { makeSampleTopic } from '../test/fixtures/sampleTopic'
 import { genreLabel, regionLabel } from './fixedTexts'
 import { correctionIdOf, termIdOf } from './ids'
@@ -290,5 +291,33 @@ describe('アプリの記録の写し', () => {
   it('既読: 読んだ話題は重なりを除き、editionId が壊れていれば id から', () => {
     const shown = ok(repairReadMark(received({ ...user, id: '2026-11-15-12', topicIds: ['a', 'a', 'b', 1], seen: 1 })))
     expect(shown).toMatchObject({ editionId: '2026-11-15-12', topicIds: ['a', 'b'], seen: false })
+  })
+})
+
+describe('出典の著者とリンクの開き方（段階3）', () => {
+  const withSource = (source: Record<string, unknown>) =>
+    received(makeSampleTopic((t) => (t.sources = [{ ...t.sources[0], ...source } as never])))
+
+  it('著者は文字ならそのまま、文字でない時は null、欄の無い出典は欄の無いまま（受け取った記録は変えない）', () => {
+    const cases: [unknown, string | null][] = [
+      ['FAKE_作り物の著者', 'FAKE_作り物の著者'],
+      [null, null],
+      [42, null],
+      [{ name: 'x' }, null],
+    ]
+    for (const [author, want] of cases) {
+      const raw = withSource({ author })
+      const before = structuredClone(raw)
+      expect(ok(repairTopic(raw, opts)).sources[0].author).toBe(want)
+      expect(raw).toEqual(before)
+    }
+    expect('author' in ok(repairTopic(withSource({}), opts)).sources[0]).toBe(false)
+  })
+
+  it("リンクにしない社（linkOpen: 'no-link'）の出典は、使ってよい URL でも link が null", () => {
+    const shown = ok(repairTopic(withSource({ outlet: FAKE_CREDIT_OUTLETS.noLink, url: 'https://example.com/n/1' }), opts))
+    expect(shown.sources[0]).toMatchObject({ url: 'https://example.com/n/1', link: null })
+    const site = ok(repairTopic(withSource({ outlet: FAKE_CREDIT_OUTLETS.site, url: 'https://example.com/n/1' }), opts))
+    expect(site.sources[0].link).toBe('https://example.com/n/1')
   })
 })

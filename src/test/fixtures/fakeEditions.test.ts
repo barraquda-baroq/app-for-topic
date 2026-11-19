@@ -69,6 +69,9 @@ const outOfNormIds = (e: FakeEdition) => new Set([e.scenes.noEmphasis, e.scenes.
 
 const allTopics = (m: FakeMonth) => m.editions.flatMap((e) => e.topics)
 
+/** 作り物の版（段階2の形の20本）の、版の決まりの範囲の知らせる物（段階3で目安を10本にしたので、本数だけ） */
+const STAGE2_COUNT_NOTE = ['話題が 20本です（目安は 10本）']
+
 afterEach(() => {
   vi.restoreAllMocks()
   vi.useRealTimers()
@@ -82,7 +85,8 @@ describe('makeFakeEdition: 版の形', () => {
     expect(ed.topics.filter((t) => t.region === 'world')).toHaveLength(10)
     for (const g of GENRE_VALUES) expect(ed.topics.some((t) => t.genre === g)).toBe(true)
     expect(ed.topics.filter((t) => t.major).map((t) => t.rank)).toEqual([1])
-    expect(checkEditionNorms(ed.edition, ed.topics)).toEqual([])
+    // 段階3で版の目安を10本にした（段階3の設計の 4.13）。作り物の版は段階2の形（20本）のままなので、本数だけを知らせる
+    expect(checkEditionNorms(ed.edition, ed.topics).map((p) => p.message)).toEqual(STAGE2_COUNT_NOTE)
     const other = makeFakeEdition({ ...ED_OPTS, slot: '20' })
     expect(checkMajorsPerDay([...ed.topics, ...other.topics])).toEqual([])
   })
@@ -437,7 +441,7 @@ describe('makeFakeMonth（何日分かの版）', () => {
     for (const e of month.editions) {
       expect(checkEdition(e.edition).errors).toEqual([])
       expect(checkTermPack(e.termPack).errors).toEqual([])
-      expect(checkEditionNorms(e.edition, e.topics)).toEqual([])
+      expect(checkEditionNorms(e.edition, e.topics).map((p) => p.message)).toEqual(STAGE2_COUNT_NOTE)
       for (const t of e.topics) if (!rejectedIds(e).has(t.id)) expect(checkTopic(t, opts).errors).toEqual([])
     }
     const days = new Map<string, Topic[]>()

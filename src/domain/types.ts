@@ -170,8 +170,13 @@ export interface Source {
   publishedAt: string | null
   /** 1〜100字（「掲載日時は不明」など） */
   publishedNote: string | null
-  /** 1〜40字。読んだ所（例 'Yahoo!ニュース'）。その時 url は読んだ所の URL、outlet は元の社 */
+  /** 1〜40字。読んだ所（例 'Yahoo!ニュース'）。その時 url は読んだ所の URL、outlet は元の社。段階3の出どころには無い（いつも null） */
   via: string | null
+  /**
+   * 1〜80字。著者（著者を書く決まりのある出どころ（src/domain/outlets.ts の credit が cc-by の社。今は Global Voices）だけ。コネクタが
+   * RSS の dc:creator から写す）。値がある時だけ欄を書く（無い時は欄ごと書かないので、ほかの出典の指紋は変わらない。段階3で足した）
+   */
+  author?: string | null
 }
 
 /** 照合した件数（0〜500）・直した件数（0〜claims）・照合したモデル */
@@ -330,6 +335,13 @@ export type UserTableName = (typeof USER_TABLES)[number]
 
 export const TABLE_NAMES = [...CONNECTOR_TABLES, ...USER_TABLES] as const
 export type TableName = (typeof TABLE_NAMES)[number]
+
+/**
+ * Claude（コネクタ）に読ませる表（records の6つ。アクセスルールの records の read の `table in [...]` と同じ並び。
+ * src/domain/types.test.ts がルールの文から並びを取り出して比べる）。既読（reads）は private にあり、読ませない（D21）
+ */
+export const CLAUDE_READ_TABLES = ['editions', 'topics', 'corrections', 'termPacks', 'editionFails', 'knownTerms'] as const
+export type ClaudeReadTableName = (typeof CLAUDE_READ_TABLES)[number]
 
 /** 置き場: Claude が読める records と、Claude が読めない private（既読だけ。D21） */
 export type Place = 'records' | 'private'

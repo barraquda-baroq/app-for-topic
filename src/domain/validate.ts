@@ -339,6 +339,8 @@ export function checkTopic(topic: unknown, opts: TopicCheckOptions = {}): CheckR
           `${p}.publishedAt は 'YYYY-MM-DDTHH:MM(:SS)?+09:00' か 'YYYY-MM-DD' か null にしてください`,
         )
       c.text(`${p}.publishedNote`, s.publishedNote, 1, T.publishedNote, true)
+      // 著者（段階3で足した欄。無い・null・1〜80字の文字だけ）
+      if (s.author !== undefined) c.text(`${p}.author`, s.author, 1, T.author, true)
     })
 
   const names = c.texts('outletNames', t.outletNames, T.outletNamesMin, T.outletNames, 1, T.outletName)
@@ -421,7 +423,8 @@ export function checkEdition(edition: unknown): CheckResult {
 }
 
 /**
- * 版の決まりの範囲（知らせるだけ。docs/SPEC.md の 6.1・7.1 の「決まりの範囲」）: 話題 20本、ジャンルは最低1本・最大5本、重大印はいちばん上。
+ * 版の決まりの範囲（知らせるだけ。docs/SPEC.md の 6.1・7.1 の「決まりの範囲」）: 話題 10本（目安。段階3の設計の 4.13。段階2までは 20本）、
+ * ジャンルは最大5本（最低は 0 で知らせない。候補に無いジャンルを知らせ続けないため）、重大印はいちばん上。
  * topics は order の話題（足りない話題は数えない）
  */
 export function checkEditionNorms(
@@ -431,7 +434,7 @@ export function checkEditionNorms(
   const c = new Collector()
   const n = RECORD_NORMS
   if (edition.order.length !== n.editionTopics)
-    c.warn('order', 'norm', `話題が ${edition.order.length}本です（決まりは ${n.editionTopics}本）`)
+    c.warn('order', 'norm', `話題が ${edition.order.length}本です（目安は ${n.editionTopics}本）`)
   const byId = new Map(topics.map((t) => [t.id, t]))
   const inOrder = edition.order
     .map((id) => byId.get(id))
@@ -484,6 +487,35 @@ export function checkEditionFail(fail: unknown): CheckResult {
 
 // ---------- 用語の辞書の束（docs/SPEC.md の 7.3） ----------
 
+/** 辞書の1語を確かめる（束の確かめと、段階3の組み立てで下書きの新しい語・新しい説明を確かめる所で同じ物を使う） */
+function termEntryInto(c: Collector, q: string, e: unknown): void {
+  const P = RECORD_LIMITS.termPack
+  if (!c.obj(q, e)) return
+  if (c.text(`${q}.key`, e.key, 1, P.key)) {
+    if (typeof e.termId !== 'string' || e.termId !== termIdOf(e.key))
+      c.err(`${q}.termId`, 'id', `${q}.termId は key の指紋（${termIdOf(e.key)}）にしてください`)
+  } else if (typeof e.termId !== 'string' || !TERM_ID_RE.test(e.termId))
+    c.err(`${q}.termId`, 'id', `${q}.termId は 't' ＋ 12字にしてください`)
+  const plain = (path: string, s: unknown) => {
+    if (typeof s === 'string' && !isPlainText(s)) c.err(path, 'plain', `${path} に改行・URL・記法の記号は使えません`)
+  }
+  c.text(`${q}.term`, e.term, 1, P.term)
+  plain(`${q}.key`, e.key)
+  plain(`${q}.term`, e.term)
+  c.texts(`${q}.aliases`, e.aliases, 0, P.aliases, 1, P.alias).forEach((a, j) => plain(`${q}.aliases[${j}]`, a))
+  if (c.text(`${q}.explanation`, e.explanation, 1, P.explanation)) plain(`${q}.explanation`, e.explanation)
+  if (e.asOf !== null && !isYm(e.asOf)) c.err(`${q}.asOf`, 'format', `${q}.asOf は 'YYYY-MM' か null にしてください`)
+  c.int(`${q}.rev`, e.rev, 1, Number.MAX_SAFE_INTEGER)
+  if (e.retired !== undefined && e.retired !== true) c.err(`${q}.retired`, 'value', `${q}.retired は true か、書かないでください`)
+}
+
+/** 辞書の語を1つずつ確かめる（束の id・数・重なりは見ない。path は欄の道の頭。段階3の組み立て。src/domain/assemble.ts） */
+export function checkTermEntry(entry: unknown, path = 'entry'): CheckResult {
+  const c = new Collector()
+  termEntryInto(c, path, entry)
+  return c.result()
+}
+
 /** 辞書の束を確かめる（今の辞書との表記の重なりは、コネクタが DO の写しで確かめる。段階3） */
 export function checkTermPack(pack: unknown): CheckResult {
   const c = new Collector()
@@ -497,28 +529,11 @@ export function checkTermPack(pack: unknown): CheckResult {
     const seen = new Set<string>()
     p.entries.forEach((e, i) => {
       const q = `entries[${i}]`
-      if (!c.obj(q, e)) return
-      if (c.text(`${q}.key`, e.key, 1, P.key)) {
-        if (typeof e.termId !== 'string' || e.termId !== termIdOf(e.key))
-          c.err(`${q}.termId`, 'id', `${q}.termId は key の指紋（${termIdOf(e.key)}）にしてください`)
-      } else if (typeof e.termId !== 'string' || !TERM_ID_RE.test(e.termId))
-        c.err(`${q}.termId`, 'id', `${q}.termId は 't' ＋ 12字にしてください`)
-      if (typeof e.termId === 'string') {
+      termEntryInto(c, q, e)
+      if (isObj(e) && typeof e.termId === 'string') {
         if (seen.has(e.termId)) c.err(`${q}.termId`, 'rule', `${q} の語が束の中に2回あります`)
         seen.add(e.termId)
       }
-      const plain = (path: string, s: unknown) => {
-        if (typeof s === 'string' && !isPlainText(s)) c.err(path, 'plain', `${path} に改行・URL・記法の記号は使えません`)
-      }
-      c.text(`${q}.term`, e.term, 1, P.term)
-      plain(`${q}.key`, e.key)
-      plain(`${q}.term`, e.term)
-      c.texts(`${q}.aliases`, e.aliases, 0, P.aliases, 1, P.alias).forEach((a, j) => plain(`${q}.aliases[${j}]`, a))
-      if (c.text(`${q}.explanation`, e.explanation, 1, P.explanation)) plain(`${q}.explanation`, e.explanation)
-      if (e.asOf !== null && !isYm(e.asOf)) c.err(`${q}.asOf`, 'format', `${q}.asOf は 'YYYY-MM' か null にしてください`)
-      c.int(`${q}.rev`, e.rev, 1, Number.MAX_SAFE_INTEGER)
-      if (e.retired !== undefined && e.retired !== true)
-        c.err(`${q}.retired`, 'value', `${q}.retired は true か、書かないでください`)
     })
   }
   if (typeof p.id !== 'string' || !TOPIC_ID_RE.test(p.id)) c.err('id', 'id', "id は '{版の id}-{指紋8字}' の形にしてください")

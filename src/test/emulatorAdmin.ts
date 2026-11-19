@@ -3,6 +3,9 @@
 // src/sync/owner.emu.test.ts・rules.emu.test.ts と、持ち主の関所の E2E（e2e/*.sync.spec.ts。Playwright の Node の側で動く）から使う。
 // 記録の文書を書く adminWriteRecord は、アプリから作れないコネクタの記録（版・話題・訂正・辞書の束・作れなかった印）を、コネクタと
 // 同じ外側の形で置くため（docs/SPEC.md の 7.7。段階1の偽のコネクタ・エミュレーターに入れる道具も同じ形で書く。16.3）。
+// 連携の記録を書く adminWriteConnector は、コネクタの匿名のアカウントを連携の画面を通さずに記録するため（コネクタの結合テスト・
+// エミュレーターにつないだ開発サーバー。npm run seed:emu -- --owner --connector UID）。
+import { CONNECTION_ID, CONNECTOR_DOC_VERSION } from '../claude/pairing'
 import { CONNECTOR_DEVICE, type Place } from '../domain/types'
 
 /** エミュレーターのプロジェクト（firebase.emu.json・src/sync/firebaseConfig.ts の EMULATOR_PROJECT_ID） */
@@ -56,6 +59,64 @@ export async function adminCreateOwner(uid: string): Promise<void> {
 /** 持ち主の記録 config/owner を管理者の権限で消す（持ち主を移す途中など） */
 export async function adminDeleteOwner(): Promise<void> {
   await emulatorRequest('DELETE', `${DOCS}/config/owner`)
+}
+
+/** 管理者の権限で書く連携の記録の中身（既定は、作り物の接続1つで「書き込みを許可」） */
+export interface AdminConnectorOptions {
+  /** 「書き込みを許可」（既定 true。false の間、コネクタは作れない） */
+  writes?: boolean
+  /** 最後に許可した接続の id（既定 'cemu00000001'。src/claude/pairing.ts の CONNECTION_ID の形） */
+  cid?: string
+  /** 接続の名前（既定「接続1」） */
+  name?: string
+  /** 連携の確かめの指紋（既定は作り物の 64字。本物の連携の流れを通さないので、コネクタの /pair/callback では使えない） */
+  pairing?: string
+  /** 連携した端末の呼び名（既定「エミュレーター」） */
+  approvedOn?: string
+  /** 連携した時刻（既定は今。サーバー時刻の代わり） */
+  pairedAt?: Date
+}
+
+/** 既定の接続の id と指紋（作り物） */
+export const ADMIN_CONNECTION_ID = 'cemu00000001'
+export const ADMIN_PAIRING = '0'.repeat(64)
+
+/**
+ * 連携の記録 config/connector を管理者の権限で書く（ルールを通さない。アプリの連携の画面が書くのと同じ NS の v2 の形: uid・pairing・
+ * pairedAt・approvedOn・writes・v: 2・pairingCid・connections（接続1つの map）。docs/SPEC.md の 7.7 の「持ち主の許可」）。
+ * uid はコネクタの匿名のアカウント。持ち主の記録 config/owner が持ち主のアカウントでないと、コネクタは何もできない（ルールの isConnector）
+ */
+export async function adminWriteConnector(uid: string, opts: AdminConnectorOptions = {}): Promise<void> {
+  const cid = opts.cid ?? ADMIN_CONNECTION_ID
+  if (!CONNECTION_ID.test(cid)) throw new Error(`接続の id の形が違います: ${cid}`)
+  const pairing = { stringValue: opts.pairing ?? ADMIN_PAIRING }
+  const pairedAt = { timestampValue: (opts.pairedAt ?? new Date()).toISOString() }
+  const approvedOn = { stringValue: opts.approvedOn ?? 'エミュレーター' }
+  await emulatorRequest('PATCH', `${DOCS}/config/connector`, {
+    fields: {
+      uid: { stringValue: uid },
+      pairing,
+      pairedAt,
+      approvedOn,
+      writes: { booleanValue: opts.writes ?? true },
+      v: { integerValue: String(CONNECTOR_DOC_VERSION) },
+      pairingCid: { stringValue: cid },
+      connections: {
+        mapValue: {
+          fields: {
+            [cid]: {
+              mapValue: { fields: { name: { stringValue: opts.name ?? '接続1' }, pairing, pairedAt, approvedOn } },
+            },
+          },
+        },
+      },
+    },
+  })
+}
+
+/** 連携の記録 config/connector を管理者の権限で消す（［連携をすべて解除］と同じ。無くてもよい） */
+export async function adminDeleteConnector(): Promise<void> {
+  await emulatorRequest('DELETE', `${DOCS}/config/connector`)
 }
 
 /** 管理者の権限で文書があるかを見る（path は documents の下。例 'config/owner'） */

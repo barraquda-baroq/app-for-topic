@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { FAKE_OUTLETS } from '../test/fixtures/fakeOutlets'
 import { makeSampleTopic } from '../test/fixtures/sampleTopic'
 import { correctionIdOf, editionFailIdOf, termIdOf, termPackIdOf, topicIdOf } from './ids'
-import { countChars, countNonSpace, RECORD_LIMITS, withinChars } from './limits'
+import { countChars, countNonSpace, RECORD_LIMITS, RECORD_NORMS, withinChars } from './limits'
 import type { CorrectionRecord, Edition, EditionFail, KnownTerm, ReadMark, TermEntry, TermPack, Topic } from './types'
 import {
   checkCorrection,
@@ -234,6 +234,18 @@ describe('話題（checkTopic）', () => {
     expect(paths(checkTopic(makeSampleTopic()))).toEqual(['sources[0].url', 'sources[1].url'])
   })
 
+  it('出典の著者（段階3）: 無い・null・1〜80字の文字だけ', () => {
+    expect(paths(topicCheck((t) => (t.sources[0].author = 'FAKE_著者')))).toEqual([])
+    expect(paths(topicCheck((t) => (t.sources[0].author = null)))).toEqual([])
+    expect(paths(topicCheck((t) => (t.sources[0].author = chars(RECORD_LIMITS.topic.author))))).toEqual([])
+    expect(RECORD_LIMITS.topic.author).toBe(80)
+    expect(paths(topicCheck((t) => (t.sources[0].author = chars(81))))).toEqual(['sources[0].author'])
+    expect(paths(topicCheck((t) => (t.sources[0].author = '')))).toEqual(['sources[0].author'])
+    expect(paths(topicCheck((t) => ((t.sources[0] as unknown as Record<string, unknown>).author = 3)))).toEqual([
+      'sources[0].author',
+    ])
+  })
+
   it('outletNames の頭は出典の社（出典の順・重なりを除く）', () => {
     expect(paths(topicCheck((t) => (t.outletNames = ['◇◇日報', '〇〇通信'])))).toEqual(['outletNames'])
     expect(paths(topicCheck((t) => (t.outletNames = ['〇〇通信', '△△新聞'])))).toEqual(['outletNames'])
@@ -334,20 +346,28 @@ describe('版（checkEdition）', () => {
     expect(paths(checkEdition(edition((e) => (e.usage = { tokens: -1 }))))).toEqual(['usage.tokens'])
   })
 
-  it('決まりの範囲（20本・ジャンル 1〜5本・重大印はいちばん上）は知らせるだけ', () => {
+  it('決まりの範囲（目安10本・ジャンルは最大5本で最低は知らせない・重大印はいちばん上）は知らせるだけ（段階3の設計の 4.13）', () => {
+    expect(RECORD_NORMS.editionTopics).toBe(10)
+    expect(RECORD_NORMS.editionGate).toBe(5)
+    expect(RECORD_NORMS.editionSpares).toBe(3)
+    expect(RECORD_NORMS.genrePerEdition).toEqual({ min: 0, max: 5 })
     const genres = ['politics', 'economy', 'tech', 'ai', 'incident', 'sports', 'entertainment'] as const
-    const topics = topicIds.map((id, i) => ({ id, genre: genres[i % 7] as Topic['genre'], major: i === 0 }))
-    expect(checkEditionNorms(edition(), topics)).toEqual([])
+    const ten = (e: Edition) => (e.order = e.order.slice(0, 10))
+    const topics = topicIds.map((id, i) => ({ id, genre: genres[i % 5] as Topic['genre'], major: i === 0 }))
+    // 10本で、スポーツ・エンタメが0本でも知らせない（候補に無いジャンル）
+    expect(checkEditionNorms(edition(ten), topics)).toEqual([])
     expect(
       checkEditionNorms(
-        edition((e) => (e.order = e.order.slice(0, 19))),
+        edition((e) => (e.order = e.order.slice(0, 9))),
         topics,
       ).map((p) => p.message),
-    ).toEqual(['話題が 19本です（決まりは 20本）'])
-    const lopsided = topics.map((t, i) => ({ ...t, genre: (i < 14 ? genres[i % 2] : genres[2 + (i % 5)]) as Topic['genre'] }))
-    expect(checkEditionNorms(edition(), lopsided).length).toBeGreaterThan(0)
+    ).toEqual(['話題が 9本です（目安は 10本）'])
+    expect(checkEditionNorms(edition(), topics).map((p) => p.message)).toEqual(['話題が 20本です（目安は 10本）'])
+    // 1つのジャンルが5本を超えると知らせる
+    const lopsided = topics.map((t, i) => ({ ...t, genre: (i < 6 ? 'politics' : genres[1 + (i % 4)]) as Topic['genre'] }))
+    expect(checkEditionNorms(edition(ten), lopsided).map((p) => p.message)).toEqual(['ジャンル politics が 6本です（0〜5本）'])
     const majorLate = topics.map((t, i) => ({ ...t, major: i === 3 }))
-    expect(checkEditionNorms(edition(), majorLate).map((p) => p.message)).toEqual([
+    expect(checkEditionNorms(edition(ten), majorLate).map((p) => p.message)).toEqual([
       '重大印の話題が、いちばん上にそろっていません',
     ])
     expect(checkMajorsPerDay([{ major: true }, { major: true }, { major: true }])).toEqual([])

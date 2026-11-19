@@ -1,18 +1,35 @@
 #!/usr/bin/env node
 // 公開: npm run deploy（Windows の PowerShell でも Mac のターミナルでも同じ。docs/DEPLOY.md・docs/SPEC.md の 14.6）。
-// DS（Diary Studio）の scripts/deploy.mjs をそのまま写した物（DS は NS の物から、Claude 用のコネクタの公開と iPhone・Android のアプリの部分を外した）。
+// DS（Diary Studio）の scripts/deploy.mjs を写した物（DS は NS の物から、Claude 用のコネクタの公開と iPhone・Android のアプリの部分を外した）に、
+// 段階3で NS の scripts/deploy.mjs からコネクタの公開を戻した（docs/CONNECTOR.md）。
 //   0. Firebase の設定値（src/sync/firebaseConfig.ts）と公開先（.firebaserc）が仮の値のままでないかを確かめる。
 //      仮のまま・食い違っている時は、何も公開せずに止めて、手順書の場所を出す
 //   1. 型を確かめる（tsc -b）
-//   2. アプリをビルドする（vite build）
+//   2. アプリをビルドする（vite build）。connector.local.json があれば、コネクタの URL をアプリに入れる（__CONNECTOR_ORIGIN__）
 //   3. Firebase Hosting とアクセスルール（Firestore のルール・索引の設定）を公開する（firebase deploy --only hosting,firestore）
-// オプション: --check（0 の確かめだけをして、公開はしない）
+//   4. connector.local.json があれば、Claude 用のコネクタも型を確かめてから公開する（connector/scripts/deploy.mjs。
+//      コネクタはアプリの src/domain・src/claude などをそのまま使うので、アプリと同じ版から公開する）
+// オプション: --check（0 の確かめだけをして、公開はしない）、--skip-app（1〜3 をしない）、--skip-connector（4 をしない。
+// npm run connector:setup がアプリとルールを公開する時に使う）
+// connector.local.json は npm run connector:setup をしたパソコンにだけある。無いまま公開すると、アプリが「コネクタ未設定」になるので、
+// コネクタの部品が入っている（コネクタを使っている）パソコンでは、先に注意して聞く（NS と同じ）。
 // npm・npx・シェルを通さず、各ツールの JS を node で直接動かす（&& のつなぎも使わない。PowerShell でも同じに動くように）。
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import {
+  MISSING_CONNECTOR_DEPS,
+  appBuildEnv,
+  ask,
+  missingLocalNotice,
+  readLocalConfig,
+  wrangler,
+  wranglerBin,
+  wranglerProblem,
+  wranglerProblemHint,
+} from '../connector/scripts/lib.mjs'
 
 const repoDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const configFile = path.join('src', 'sync', 'firebaseConfig.ts')
@@ -22,6 +39,29 @@ const firebasercFile = '.firebaserc'
 export const PLACEHOLDER_PROJECT = 'topic-studio-xxxx'
 
 const say = (msg = '') => console.log(msg)
+
+/**
+ * 公開するアプリのビルドの環境変数（runNode の env。undefined は子の環境から外れる）。開発用の値（エミュレーター・E2E の持ち主の確かめ・
+ * 手元のコネクタ）は入れない: PowerShell の $env: は画面を閉じるまで残るので、開発サーバーを動かした画面で npm run deploy をすると、
+ * 公開するアプリがエミュレーターにつながってしまうため。コネクタの URL は connector.local.json を優先し、無ければ https の
+ * VITE_CONNECTOR_ORIGIN だけ（connector/scripts/lib.mjs の appBuildEnv。NS と同じ）
+ */
+export function appEnv(env = process.env, local = null) {
+  return { ...appBuildEnv(env, local), VITE_E2E_OWNER_LOCK: undefined }
+}
+
+/**
+ * 何を公開するか。flags = コマンドの引数、local = connector.local.json（readLocalConfig。無ければ null）、
+ * connectorDeps = コネクタの部品（wrangler）が入っているか。
+ * 戻り値: { app: アプリとルールを公開するか, connector: 'deploy' | 'no-local'（このパソコンに connector.local.json が無い）|
+ * 'missing-deps'（部品が無い）| 'skip'（--skip-connector）, notice: 公開の前に出して聞く注意（無ければ null） }
+ */
+export function deployPlan(flags, local, connectorDeps) {
+  const has = (f) => (flags instanceof Set ? flags.has(f) : flags.includes(f))
+  const app = !has('--skip-app')
+  const connector = has('--skip-connector') ? 'skip' : !local ? 'no-local' : connectorDeps ? 'deploy' : 'missing-deps'
+  return { app, connector, notice: missingLocalNotice({ local, skipApp: !app, connectorDeps }) }
+}
 
 /** firebaseConfig.ts の文字から項目の値を取り出す（'…'・"…" のどちらで書いてあってもよい。無ければ null） */
 function valueOf(text, key) {
@@ -154,6 +194,8 @@ const FIREBASE_HINTS = [
 
 async function main() {
   const flags = new Set(process.argv.slice(2))
+  const local = readLocalConfig()
+  const plan = deployPlan(flags, local, Boolean(wranglerBin()))
   if (Number(process.versions.node.split('.')[0]) < 22) {
     say(`Node.js の版が古すぎます（いま ${process.version}）。Node.js 24 LTS を入れ直してください（docs/DEPLOY.md の 1 の 1）。`)
     process.exit(1)
@@ -172,23 +214,73 @@ async function main() {
     return
   }
 
-  // 開発用の値（エミュレーター）は公開するアプリに入れない: PowerShell の $env: は画面を閉じるまで残るので、
-  // 開発サーバーを動かした画面で npm run deploy をすると、公開するアプリがエミュレーターにつながってしまうため
-  const env = { VITE_FIREBASE_EMULATOR: undefined, VITE_E2E_OWNER_LOCK: undefined }
-  if (process.env.VITE_FIREBASE_EMULATOR) say('エミュレーターの設定（VITE_FIREBASE_EMULATOR）は公開するアプリには入れません')
+  // コネクタを別のパソコンで準備した時: このまま公開すると、アプリからコネクタの URL が消える
+  if (plan.notice) {
+    for (const line of plan.notice) say(line)
+    if (
+      process.stdin.isTTY &&
+      !(await ask('コネクタの URL なしでアプリを公開しますか？（コネクタをまだ準備していない・使わない時は y）', false))
+    ) {
+      say('中止しました（何も公開していません）。')
+      process.exit(1)
+    }
+  }
 
-  await step('型の確かめ（tsc -b）', need('typescript', 'tsc'), ['-b'], env)
-  await step('アプリのビルド（vite build）', need('vite', 'vite'), ['build'], env)
-  // 公開先は .firebaserc のプロジェクト（firebase use で別のプロジェクトを選んでいても、確かめた所へ送る）
-  await step(
-    'Firebase Hosting とアクセスルールの公開（firebase deploy）',
-    need('firebase-tools', 'firebase'),
-    ['deploy', '--only', 'hosting,firestore', '--project', projectId],
-    {},
-    FIREBASE_HINTS,
-  )
-  say(`\n公開しました: https://${projectId}.web.app`)
-  say('（初めて公開した時は、docs/DEPLOY.md の 1 の 10「ログインの戻り先を登録する」もしてください）')
+  if (plan.app) {
+    // 開発用の値（エミュレーター・E2E の持ち主の確かめ・手元のコネクタ）は公開するアプリに入れない（appEnv）
+    const env = appEnv(process.env, local)
+    if (process.env.VITE_FIREBASE_EMULATOR) say('エミュレーターの設定（VITE_FIREBASE_EMULATOR）は公開するアプリには入れません')
+    if (process.env.VITE_CONNECTOR_ORIGIN && !local && !env.VITE_CONNECTOR_ORIGIN)
+      say('https でないコネクタの URL（VITE_CONNECTOR_ORIGIN）は公開するアプリには入れません')
+    if (env.VITE_CONNECTOR_ORIGIN) say(`コネクタの URL をアプリに入れます: ${env.VITE_CONNECTOR_ORIGIN}`)
+
+    await step('型の確かめ（tsc -b）', need('typescript', 'tsc'), ['-b'], env)
+    await step('アプリのビルド（vite build）', need('vite', 'vite'), ['build'], env)
+    // 公開先は .firebaserc のプロジェクト（firebase use で別のプロジェクトを選んでいても、確かめた所へ送る）
+    await step(
+      'Firebase Hosting とアクセスルールの公開（firebase deploy）',
+      need('firebase-tools', 'firebase'),
+      ['deploy', '--only', 'hosting,firestore', '--project', projectId],
+      {},
+      FIREBASE_HINTS,
+    )
+  }
+
+  if (plan.connector === 'no-local')
+    say(
+      '\n（このパソコンに connector.local.json が無いので、Claude 用のコネクタは公開しませんでした。' +
+        '別のパソコンで準備した時は、このパソコンでも一度 npm run connector:setup を実行してください。docs/CONNECTOR.md）',
+    )
+  else if (plan.connector === 'missing-deps') {
+    say(`\n✗ ${MISSING_CONNECTOR_DEPS}`)
+    process.exit(1)
+  } else if (plan.connector === 'deploy') await deployConnectorStep(local)
+
+  say(plan.app ? `\n公開しました: https://${projectId}.web.app` : '\n公開しました。')
+  if (plan.app) say('（初めて公開した時は、docs/DEPLOY.md の 1 の 10「ログインの戻り先を登録する」もしてください）')
+}
+
+/** Claude 用のコネクタを、型を確かめてから公開する（NS の scripts/deploy.mjs と同じ） */
+async function deployConnectorStep(local) {
+  await step('コネクタの型の確かめ（tsc -p connector/tsconfig.worker.json）', need('typescript', 'tsc'), [
+    '-p',
+    path.join('connector', 'tsconfig.worker.json'),
+    '--noEmit',
+  ])
+  const { deployConnector } = await import(pathToFileURL(path.join(repoDir, 'connector', 'scripts', 'deploy.mjs')).href)
+  say('\n▶ Claude 用のコネクタの公開')
+  let r = await deployConnector({ origin: local.origin, enableDcr: local.enableDcr })
+  // Cloudflare のログインが切れた（出力を控えて動かすので、wrangler はブラウザを開けない）: ここでログインして、もう一度
+  if (!r.ok && wranglerProblem(r.output) === 'login' && process.stdin.isTTY) {
+    say('\nCloudflare へのログインが切れています。ブラウザが開いたら Cloudflare にログインして「Allow」を押してください。')
+    const login = await wrangler(['login'])
+    if (login.code === 0) r = await deployConnector({ origin: local.origin, enableDcr: local.enableDcr })
+  }
+  if (!r.ok) {
+    const hint = wranglerProblemHint(wranglerProblem(r.output))
+    say(`✗ ${hint ?? 'コネクタを公開できませんでした（上の表示を見てください。npm --prefix connector ci を忘れていないか）'}`)
+    process.exit(1)
+  }
 }
 
 // このファイルを直接動かした時だけ公開する（テストから checkConfig を読み込んだ時は動かさない）

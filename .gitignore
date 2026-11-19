@@ -13,3 +13,9 @@ blob-report
 # Vite が自動で読み込む、この端末だけの設定（公開のリポジトリに入れない）
 .env
 *.local
+# Claude 用のコネクタ（段階3。NS と同じ）: 公開の URL（npm run connector:setup が作る）・手元の秘密（TOKEN_ENC_KEY）・
+# 手元の Durable Object と KV の中身（資料の控えも入りうる）・公開する形にまとめた物（bundle-check）。公開のリポジトリに入れない
+connector.local.json
+connector/dist
+connector/.wrangler
+connector/.dev.vars

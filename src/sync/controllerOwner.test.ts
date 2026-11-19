@@ -54,7 +54,7 @@ vi.mock('./firestore', () => ({ firestore: () => ({}) }))
 vi.mock('./owner', () => ({
   checkOwner: (_fs: unknown, uid: string) => h.check(uid, 'controller'),
 }))
-vi.mock('./appModel', () => ({ DATA_MODEL: 1, APP_VERSION: '0.1', watchAppModel: () => () => {} }))
+vi.mock('./appModel', () => ({ DATA_MODEL: 2, APP_VERSION: '0.1', watchAppModel: () => () => {} }))
 // 同期のエンジン: 始めると本物の claimOwner（src/sync/engine.ts）と同じに持ち主を確かめ、記録が無い・ほかのアカウントなら止まって知らせる
 // （ほかのアカウントなら、この端末の持ち主の印を消す）。止めた後に届いた答えは知らせない
 vi.mock('./engine', () => ({

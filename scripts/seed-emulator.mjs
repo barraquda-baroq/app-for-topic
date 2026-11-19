@@ -15,13 +15,16 @@
 //   --seed TEXT      作り物の乱数の種（既定 fake-month。同じ種からは同じ物）
 //   --until DATE     いちばん新しい版の日付（YYYY-MM-DD。日本時間。既定は2時間より前に始まった、いちばん新しい枠の日）
 //   --until-slot S   その日の最後の枠（12 か 20）
-//   --owner          持ち主の記録 config/owner もこのアカウントにする（VITE_E2E_OWNER_LOCK=1 の開発サーバーで開く時だけ要る）
+//   --owner          持ち主の記録 config/owner もこのアカウントにする（VITE_E2E_OWNER_LOCK=1 の開発サーバーで開く時と、コネクタを試す時に要る）
+//   --connector UID  連携の記録 config/connector も、このコネクタの匿名のアカウントにする（書き込みを許可。--owner と一緒に使う）。
+//                    エミュレーターにつないだコネクタ（wrangler dev）を試す時。UID はコネクタの /connect/identity の uid
+//                    （例: npm run seed:emu -- --owner --connector UID。連携の画面を通さないので、claude.ai からの連携の確かめはしない）
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repoDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-export const USAGE = `使い方: npm run seed:emu -- [--days 35] [--sub dev-author | --uid UID] [--seed fake-month] [--until YYYY-MM-DD] [--until-slot 12|20] [--owner]`
+export const USAGE = `使い方: npm run seed:emu -- [--days 35] [--sub dev-author | --uid UID] [--seed fake-month] [--until YYYY-MM-DD] [--until-slot 12|20] [--owner [--connector UID]]`
 
 /** 既定の値（src/test/seedEmulator.ts の SEED_DEFAULTS と同じ。引数の読み取りは TypeScript を読み込む前にする） */
 export const DEFAULTS = { days: 35, sub: 'dev-author', seed: 'fake-month' }
@@ -36,6 +39,7 @@ export function parseArgs(argv) {
     until: null,
     untilSlot: null,
     owner: false,
+    connector: null,
     help: false,
   }
   const args = argv.flatMap((a) =>
@@ -65,6 +69,10 @@ export function parseArgs(argv) {
       const v = value()
       if (!/^[0-9A-Za-z]{1,128}$/.test(v)) throw new Error(`--uid は英数字にしてください（${v}）`)
       out.uid = v
+    } else if (name === '--connector') {
+      const v = value()
+      if (!/^[0-9A-Za-z]{1,128}$/.test(v)) throw new Error(`--connector は英数字にしてください（${v}）`)
+      out.connector = v
     } else if (name === '--seed') {
       const v = value()
       if (!v.trim()) throw new Error('--seed が空です')
@@ -79,6 +87,10 @@ export function parseArgs(argv) {
       out.untilSlot = v
     } else throw new Error(`知らない引数です: ${name}`)
   }
+  // コネクタは、持ち主の記録が書く先のアカウントの時だけ読み書きできる（ルールの isConnector）
+  if (out.connector && !out.owner) throw new Error('--connector は --owner と一緒に使ってください')
+  if (out.connector && out.uid && out.connector === out.uid)
+    throw new Error('--connector と --uid が同じです（持ち主はコネクタにならない）')
   return out
 }
 
@@ -96,6 +108,10 @@ export function report(plan, uid, args) {
     `  版の日付が30日の境の外: ${n(plan.outsideRetention)}件（その日の最初の受け取りの後、30日の手入れで消える）`,
   ]
   if (args.owner) lines.push(`  持ち主の記録 config/owner も、このアカウント（${uid}）にしました`)
+  if (args.connector)
+    lines.push(
+      `  連携の記録 config/connector も、コネクタの匿名のアカウント（${args.connector}）にしました（書き込みを許可。連携の画面を通していません）`,
+    )
   if (!args.uid)
     lines.push(
       `  エミュレーターにつないだ開発サーバーの console で __ts.signInForTest('${args.sub}') とすると、このアカウントでログインします`,
@@ -122,6 +138,7 @@ async function main() {
     logLevel: 'error',
   })
   const opts = { days: args.days, seed: args.seed, owner: args.owner }
+  if (args.connector) opts.connector = args.connector
   if (args.until) opts.until = args.until
   if (args.untilSlot) opts.untilSlot = args.untilSlot
   try {

@@ -1,0 +1,42 @@
+// Topic Studio の Claude 用コネクタ（Cloudflare Worker・無料プラン）。NS（Novel Studio）の connector/wrangler.jsonc を写し、名前と
+// アプリ・Firebase の値を TS の物にした。説明は docs/CONNECTOR.md。
+// - 公開の URL（MCP_RESOURCE・PUBLIC_ORIGIN）はこのファイルに書かず、公開する時に ../connector.local.json から渡す
+//   （npm run deploy / npm run connector:setup。scripts/deploy.mjs）。空の時はリクエストの URL から決める
+// - 秘密は TOKEN_ENC_KEY だけ（npm run connector:setup が作って wrangler secret put に渡す。画面には出さない）
+// - KV（OAUTH_KV）と Durable Object（Vault）は最初の公開で自動で作られる
+// - NS と同じ Cloudflare のアカウントに置く（無料枠を分け合う。docs/SPEC.md の 18.・設計の 1.11）
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "topic-studio-connector",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "kv_namespaces": [{ "binding": "OAUTH_KV" }],
+  "durable_objects": { "bindings": [{ "name": "VAULT", "class_name": "Vault" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }],
+  // 毎日 4:23（日本時間）: 期限切れの OAuth の記録の片付けと、Vault の夜の仕事（写しの数・古い回・出どころの決まりの読み。中身は Vault）
+  "triggers": { "crons": ["23 19 * * *"] },
+  "vars": {
+    "MCP_RESOURCE": "",
+    "PUBLIC_ORIGIN": "",
+    "APP_ORIGIN": "https://topic-studio-1a463.web.app",
+    "FIREBASE_PROJECT_ID": "topic-studio-1a463",
+    // Firebase の Web アプリの公開の識別子（src/sync/firebaseConfig.ts と同じ。秘密ではない。test/unit/basics.test.ts で同じか確かめる）
+    "FIREBASE_API_KEY": "AIzaSyDjn4BCnbtmCskU8LJYV2VcDZ3nbLJ9WYw",
+    // claude.ai の「自動的に登録」（DCR）を受け付けるか。つながらない時の最後の手段で有効にする時は、ここではなく
+    // リポジトリの直下の connector.local.json に "enableDcr": true を足す（ここを書き換えると git pull が止まる。docs/CONNECTOR.md）
+    "ENABLE_DCR": "false",
+    // Claude Code からも使う時は "true"（Claude Code の公開の識別子とローカルの戻り先を受け付ける）。定期実行は claude.ai に
+    // 登録したコネクタの接続を通って届くので、受け付けなくてよい（設計の 1.1）
+    "ALLOW_CLAUDE_CODE": "false",
+    // 1回の呼び出しで調べる本文の文字数の上限（無料プランの CPU 時間の目安。有料プランなら 20000000）
+    "WORK_BUDGET_CHARS": "300000",
+    // 1日（太平洋時間）にコネクタが使う Firestore の読み取り・書き込みの上限（アプリの同期の分を残すため。NS と同じ値）
+    "DAILY_READ_BUDGET": "15000",
+    "DAILY_WRITE_BUDGET": "5000",
+  },
+  // 有料プラン（Workers Paid）にした時だけ: "limits": { "cpu_ms": 30000 }
+}

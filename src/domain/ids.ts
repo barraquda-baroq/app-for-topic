@@ -8,7 +8,7 @@
 // Claude に見せる短い id（話題 'p:'＋指紋8字・版 'e:'＋版の id）とその解き方も置く（docs/SPEC.md の 7.7・7.8 の「続報のつなぎ」）。
 import { stableStringify } from './equal'
 import { fingerprint } from './hash'
-import { isExpiredDate, isYmd, jstDateOf } from './jst'
+import { isExpiredDate, isYmd, jstDateOf, jstParts } from './jst'
 import type { CorrectionRecord, EditionFail, Slot, TermEntry, Topic } from './types'
 
 /** 話題・辞書の束・作れなかった印・訂正の指紋の字数 */
@@ -100,6 +100,25 @@ export function editionIdOfRecordId(id: unknown): string | null {
   if (typeof id !== 'string') return null
   const head = id.slice(0, 13)
   return (id.length === 13 || id[13] === '-') && parseEditionId(head) ? head : null
+}
+
+// ---------- 回の id（段階3。段階3の設計の 1.3。docs/SPEC.md の 7.7 の runId） ----------
+
+/** 回の id の乱数の字数（[0-9a-z]） */
+export const RUN_ID_RAND_CHARS = 4
+/** 回の id の形（'r' ＋ 始めた時刻（日本時間の YYYYMMDDHHmm）＋ '-' ＋ 乱数4字。作り物の版の runId と同じ形） */
+export const RUN_ID_RE = new RegExp(`^r[0-9]{12}-[0-9a-z]{${RUN_ID_RAND_CHARS}}$`)
+
+/**
+ * 回の id（'r{YYYYMMDDHHmm}-{4字}'。時刻は日本時間）。乱数は呼ぶ側が渡す（domain は乱数を持たない。コネクタは crypto.getRandomValues の
+ * [0-9a-z]）。乱数が [0-9a-z] の4字でなければ投げる
+ */
+export function runIdAt(ms: number, rand: string): string {
+  if (!new RegExp(`^[0-9a-z]{${RUN_ID_RAND_CHARS}}$`).test(rand))
+    throw new RangeError(`回の id の乱数は [0-9a-z] の${RUN_ID_RAND_CHARS}字にしてください`)
+  const p = jstParts(ms)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `r${p.date.replaceAll('-', '')}${two(p.hour)}${two(p.minute)}-${rand}`
 }
 
 // ---------- 中身の指紋から作る id ----------

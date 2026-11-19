@@ -8,12 +8,14 @@
 //   より前の物も混ざり、新しい端末が受け取らない事を目で確かめられる
 // - 今より後の updated は書かない（購読の位置が先に進み、その後にアプリが書いた記録を受け取れなくなるため）。いちばん新しい版の枠は、
 //   既定では2時間より前に始まった枠（訂正は版の 85分後まで足すので、どの記録も今より前になる）
+// - コネクタを試す時（エミュレーターにつないだ開発サーバーと wrangler dev）は、持ち主の記録 config/owner と連携の記録
+//   config/connector（コネクタの匿名のアカウント。src/test/emulatorAdmin.ts の adminWriteConnector）も書く（設計の 2.2）
 // エミュレーター（127.0.0.1:8080。プロジェクト demo-topic-studio）にだけ書く。本物のプロジェクトには届かない。
 // Node（scripts/seed-emulator.mjs・Playwright の Node の側）で動くので、ブラウザ・Dexie・React に頼らない
 import { firstSyncSinceMs, isWithinRetention, latestSlotAt } from '../domain/jst'
 import { CONNECTOR_TABLES, type ConnectorTableName, type Place, type Slot } from '../domain/types'
 import { encodeRecord, placeOf } from '../sync/codec'
-import { adminCreateOwner, adminGoogleUser, adminWriteRecords, type AdminRecordDoc } from './emulatorAdmin'
+import { adminCreateOwner, adminGoogleUser, adminWriteConnector, adminWriteRecords, type AdminRecordDoc } from './emulatorAdmin'
 import { fakeRecordsOf, makeFakeMonth, type FakeMonth, type FakeRecord } from './fixtures/fakeEditions'
 
 /** 既定の値（npm run seed:emu の引数を省いた時） */
@@ -121,13 +123,30 @@ export async function seedTargetUid(target: { uid?: string; sub?: string }): Pro
   return adminGoogleUser(target.sub ?? SEED_DEFAULTS.sub)
 }
 
+export interface SeedTargets {
+  /** 持ち主の記録 config/owner もそのアカウントにする */
+  owner?: boolean
+  /** 連携の記録 config/connector も、このコネクタの匿名のアカウント（uid）にする（書き込みを許可。owner と一緒に使う） */
+  connector?: string
+}
+
 /**
  * 作り物の版をエミュレーターに書く（管理者の権限。作った時刻の順に、まとめて書く）。owner なら持ち主の記録 config/owner も
- * そのアカウントにする（VITE_E2E_OWNER_LOCK=1 の開発サーバーで開く時。ふだんのエミュレーターの開発サーバーは持ち主を確かめない）
+ * そのアカウントにする（VITE_E2E_OWNER_LOCK=1 の開発サーバーで開く時と、コネクタを試す時。ふだんのエミュレーターの開発サーバーは
+ * 持ち主を確かめない）。connector なら、連携の記録 config/connector もそのコネクタの匿名のアカウントにする（コネクタは、持ち主の
+ * 記録が書く先のアカウントの時だけ読み書きできるので、owner と一緒に渡す。ルールの isConnector）
  */
-export async function seedEmulator(uid: string, opts: SeedOptions & { owner?: boolean } = {}): Promise<SeedPlan> {
+export async function seedEmulator(uid: string, opts: SeedOptions & SeedTargets = {}): Promise<SeedPlan> {
+  if (opts.connector !== undefined) {
+    if (!opts.owner) throw new RangeError('コネクタを記録する時は、持ち主の記録も書いてください（--owner）')
+    if (!/^[0-9A-Za-z]{1,128}$/.test(opts.connector))
+      throw new RangeError(`コネクタの uid は英数字にしてください（${opts.connector}）`)
+    // 持ち主自身はコネクタにならない（ルールの validConnector・isConnector）
+    if (opts.connector === uid) throw new RangeError('コネクタの uid が、書く先（持ち主）のアカウントと同じです')
+  }
   const plan = seedPlan(opts)
   if (opts.owner) await adminCreateOwner(uid)
+  if (opts.connector !== undefined) await adminWriteConnector(opts.connector)
   for (const place of ['records', 'private'] as const) {
     if (plan.docs[place].length) await adminWriteRecords(uid, place, plan.docs[place])
   }

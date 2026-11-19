@@ -6,7 +6,9 @@
 export const APP_VERSION = '0.1'
 
 /**
- * このアプリが書くデータの形の版（今は 1。docs/SPEC.md の 7.8 の「持ち主・データの形の版・同期の表示」）。表や記録の意味を変えたら上げる
- * （users/{uid}/meta/app の model。src/sync/appModel.ts）。段階3のコネクタも同じ値（CONNECTOR_MODEL）を持ち、違えば書かない（7.7）
+ * このアプリが書くデータの形の版（docs/SPEC.md の 7.8 の「持ち主・データの形の版・同期の表示」）。表や記録の意味を変えたら上げる
+ * （users/{uid}/meta/app の model。src/sync/appModel.ts）。段階3のコネクタも同じ値（CONNECTOR_MODEL）を持ち、違えば書かない（7.7）。
+ * 段階3で 1 → 2 に上げた: 出典に著者の欄（author）を足し、出典の表示（社ごとの出典の書き方と「…を加工して作成」。src/domain/credit.ts）が
+ * 出どころの規約の条件になったため。出典の表示を持つアプリが1台でも開かれるまで、コネクタは版も話題も足さない（古い端末は「要更新」）
  */
-export const DATA_MODEL = 1
+export const DATA_MODEL = 2

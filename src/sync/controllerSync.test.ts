@@ -64,7 +64,7 @@ vi.mock('./owner', () => ({
   },
 }))
 vi.mock('./appModel', () => ({
-  DATA_MODEL: 1,
+  DATA_MODEL: 2,
   APP_VERSION: '0.1',
   watchAppModel: () => {
     h.modelWatches += 1

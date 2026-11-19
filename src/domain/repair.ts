@@ -88,7 +88,10 @@ export interface ShownStakeholder {
   reason: string | null
 }
 
-/** 出典の写し（link = 画面でリンクにする URL。決まったホストでない URL は null で、文として出す） */
+/**
+ * 出典の写し（link = 画面でリンクにする URL。決まったホストでない URL・リンクにしない社の URL は null で、文として出す。author は
+ * 欄がある時だけ、文字か null）
+ */
 export interface ShownSource extends Source {
   link: string | null
 }
@@ -203,6 +206,8 @@ export function repairTopic(raw: unknown, opts: TopicRepairOptions = {}): Repair
         publishedNote: strOrNull(s.publishedNote),
         via: strOrNull(s.via),
       }
+      // 著者（段階3で足した欄。ある時だけ、文字か null にする。無い記録は欄の無いまま。出典の表示は src/domain/credit.ts）
+      if (s.author !== undefined) source.author = strOrNull(s.author)
       return { ...source, link: sourceLinkUrl(source, dir) }
     })
     const followUp =

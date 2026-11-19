@@ -6,7 +6,10 @@ name: CI
 # 段階1の test:sync は src/**/*.emu.test.ts（持ち主の関所・アクセスルール・2台の同期・段階0からの上がり）、test:e2e:sync は
 # e2e/*.sync.spec.ts（持ち主の関所・作り物の版の受け取りと2つのブラウザの既読・知ってる）。どちらも設定のファイルの名前の形で拾うので、
 # 同じ形の名前で足したテストはここを直さなくても流れる。
-# CI のログに記事の本文を出さない（docs/SPEC.md の 3.。段階1のデータは作り物の版だけ（〇〇市・https://example.com/…）で、テストのアカウントも作り物だけ）
+# CI のログに記事の本文を出さない（docs/SPEC.md の 3.。段階1のデータは作り物の版だけ（〇〇市・https://example.com/…）で、テストのアカウントも作り物だけ）。
+# 段階3で Claude 用のコネクタ（connector/。NS の形）の部品・型・テスト・公開する形の確かめを足した（設計の 7. の「CI」）。CI は府省・庁や
+# Global Voices のサイトへ出ない（コネクタのテストの fetch は connector/test/support/netGuard.ts が見張り、手元のエミュレーターのほかへ出たら落とす。
+# 使うのは作り物の出どころ・作り物の社（〇〇省・△△庁・▽▽府・▲▲台・□□ボイス・〇〇協会など）だけ）
 on:
   push:
     branches: [main, master, 'claude/**', 'ccr-**']
@@ -25,9 +28,16 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            connector/package-lock.json
       - run: npm ci
+      # Claude 用のコネクタ（アプリの src/domain・src/claude などをまとめて使うので、アプリと一緒に確かめる。NS の ci.yml と同じ）
+      - run: npm --prefix connector ci
       - name: 型チェック
         run: npm run typecheck
+      - name: コネクタの型チェック
+        run: npm --prefix connector run typecheck
       - name: 整形の確かめ（Prettier）
         run: npm run format:check
       # E2E のテストには流す端末の印（@pc・@s・@m・@ios。playwright.config.ts）を付ける。印の無いテストはどの端末でも流れないので
@@ -38,6 +48,13 @@ jobs:
       # 入れる道具、段階2の見本の道具（案・見本のページ・撮る物の一覧））
       - name: 単体テスト
         run: npm test
+      # 単体（Node。Firebase は作り物の fetch）・Workers の実行環境（workerd。OAuth・連携・/mcp）（connector/scripts/test.mjs）
+      - name: コネクタのテスト（単体・Workers の実行環境）
+        run: npm run test:connector
+      # 本番の wrangler.jsonc だけをまとめて（Cloudflare には送らない）、dexie・firebase・react・zustand・アプリの画面・同期のエンジン・
+      # テストの物（src/test/・connector/test/）・作り物の名前（FAKE_・作り物の社）・ブラウザの名前（Mozilla/）が入っていないことと、大きさを見る
+      - name: コネクタの公開する形の確かめ
+        run: npm --prefix connector run bundle-check
       # Firebase エミュレーター（firebase-tools 15）は Java 21 以上が要る（ランナーの既定は 17）。DS の ci.yml と同じ形
       - uses: actions/setup-java@v4
         with:
@@ -53,6 +70,10 @@ jobs:
       # 上がる（upgrade.emu.test.ts）（docs/SPEC.md の 16.3）
       - name: 持ち主の関所・アクセスルール・同期のテスト（Firebase エミュレーター）
         run: npm run test:sync
+      # コネクタの結合テスト（本番のアクセスルール・アプリの同期のエンジンとコネクタの Vault を一緒に動かす。connector/test/emu）。
+      # テストは B3 以降で足す（まだ無い間も通る: connector/vitest.emu.config.ts の passWithNoTests）
+      - name: コネクタの結合テスト（Firebase エミュレーター）
+        run: npm run test:connector:emu
       - name: ビルド
         run: npm run build
       # 公開するビルドに、テスト用の入口（ログインの印と作り物の版の印・開発用フック window.__ts とその関数・エミュレーターのプロジェクト名・
@@ -64,7 +85,7 @@ jobs:
       # markSeen は段階2で足した開発用フックの鍵（ストアの関数の名前は縮めると消える）。同じく段階2で足した openTopic は、詳細を開く
       # 本物の部品の名前（src/features/topic/sheets.ts の useTopicSheet）でもあるので見ない（__ts で見る）
       - name: ビルドにテスト用の入口と作り物の版が無いことの確かめ
-        run: "! grep -rqE 'topic-studio:test-auth|topic-studio:test-editions|fakeSignIn|putFakeEditions|showUpdateBanner|__ts|markRead|markSeen|[{,]know:|fakeEditions|makeFakeEdition|makeFakeMonth|fakeRecordsOf|FAKE_TOPIC_SCENES|fakeOutlets|FAKE_OUTLET|〇〇通信|△△新聞|□□放送|◇◇日報|××ニュース|fake-writer-model|fake-checker-model|seedEmulator|seed-emulator|demo-topic-studio|VITE_E2E_OWNER_LOCK' dist/"
+        run: "! grep -rqE 'topic-studio:test-auth|topic-studio:test-editions|fakeSignIn|putFakeEditions|showUpdateBanner|__ts|markRead|markSeen|[{,]know:|fakeEditions|makeFakeEdition|makeFakeMonth|fakeRecordsOf|FAKE_TOPIC_SCENES|fakeOutlets|FAKE_OUTLET|〇〇通信|△△新聞|□□放送|◇◇日報|××ニュース|〇〇省|△△庁|▽▽府|▲▲台|□□ボイス|〇〇協会|fake-writer-model|fake-checker-model|seedEmulator|seed-emulator|demo-topic-studio|VITE_E2E_OWNER_LOCK' dist/"
       # ふだんは1分半ほど。GitHub の機械が Ubuntu の置き場（archive.ubuntu.com）の名前を引けない時、apt が1つずつ待ち続けて
       # 30分の期限まで止まったことがある（DS の CI。2026-11-11）。1回を8分で打ち切り、1分おいてもう1回だけやり直す。
       # 打ち切っても、sudo の下の apt-get は残って dpkg の鍵を持ち続ける（2回目が「Could not get lock」で落ちた）ので、
@@ -121,7 +142,12 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            connector/package-lock.json
       - run: npm ci
+      # 連携の通しの E2E（e2e/pairing.sync.spec.ts。段階3の後の塊で足す）が本物のコネクタを動かすので、コネクタの部品も入れる
+      - run: npm --prefix connector ci
       # Firebase エミュレーター（firebase-tools 15）は Java 21 以上が要る（test の仕事と同じ）
       - uses: actions/setup-java@v4
         with:

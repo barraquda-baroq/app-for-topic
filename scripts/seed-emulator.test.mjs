@@ -16,6 +16,7 @@ describe('seed-emulator の引数', () => {
       until: null,
       untilSlot: null,
       owner: false,
+      connector: null,
       help: false,
     })
   })
@@ -27,6 +28,8 @@ describe('seed-emulator の引数', () => {
       { sub: 'e2e-a', seed: 's1', until: '2026-11-14', untilSlot: '12', owner: true },
     )
     expect(parseArgs(['--uid', 'AbC123']).uid).toBe('AbC123')
+    expect(parseArgs(['--owner', '--connector', 'anonUid123'])).toMatchObject({ owner: true, connector: 'anonUid123' })
+    expect(parseArgs(['--connector=anonUid123', '--owner']).connector).toBe('anonUid123')
     expect(parseArgs(['--help']).help).toBe(true)
     expect(parseArgs(['-h']).help).toBe(true)
   })
@@ -43,6 +46,11 @@ describe('seed-emulator の引数', () => {
     [['--until-slot', '9'], '--until-slot は 12 か 20'],
     [['--seed', ' '], '--seed が空'],
     [['--day', '3'], '知らない引数です: --day'],
+    [['--connector', 'a-b', '--owner'], '--connector は英数字'],
+    [['--owner', '--connector'], '--connector の値がありません'],
+    // コネクタは、持ち主の記録が書く先のアカウントの時だけ読み書きできる（ルールの isConnector）
+    [['--connector', 'anonUid123'], '--connector は --owner と一緒に'],
+    [['--uid', 'sameUid', '--owner', '--connector', 'sameUid'], '--connector と --uid が同じ'],
   ])('%j は断る', (argv, msg) => {
     expect(() => parseArgs(argv)).toThrow(msg)
   })
@@ -67,11 +75,18 @@ describe('seed-emulator の結果の文', () => {
     expect(text).toContain('32日）より前: 111件')
     expect(text).toContain("__ts.signInForTest('dev-author')")
     expect(text).not.toContain('config/owner')
+    expect(text).not.toContain('config/connector')
   })
 
   it('--uid の時はログインの仕方を出さず、--owner の時は持ち主の記録も知らせる', () => {
     const text = report(plan, 'uid-2', parseArgs(['--uid', 'uid2', '--owner']))
     expect(text).not.toContain('signInForTest')
     expect(text).toContain('config/owner')
+  })
+
+  it('--connector の時は連携の記録も知らせる', () => {
+    const text = report(plan, 'uid-3', parseArgs(['--owner', '--connector', 'anonUid123']))
+    expect(text).toContain('config/owner')
+    expect(text).toContain('config/connector も、コネクタの匿名のアカウント（anonUid123）')
   })
 })

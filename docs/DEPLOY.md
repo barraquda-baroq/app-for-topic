@@ -418,7 +418,9 @@ npm run seed:emu -- --days 35
   ログインした後に console の `__ts.syncUid()` で uid を見て、`npm run seed:emu -- --uid <その uid>`。
 - ほかのオプション: `--sub 名前`（仮のアカウントの名前）・`--seed 文字`（同じ文字からは同じ作り物）・`--until YYYY-MM-DD`・`--until-slot 12|20`
   （いちばん新しい版の枠。既定は2時間より前に始まった、いちばん新しい枠）・`--owner`（持ち主の記録 `config/owner` もそのアカウントにする。
-  `VITE_E2E_OWNER_LOCK=1` で開いた開発サーバーの時だけ要ります）。
+  `VITE_E2E_OWNER_LOCK=1` で開いた開発サーバーの時だけ要ります）・`--connector UID`（段階3から。連携の記録 `config/connector` も、
+  そのコネクタの匿名のアカウントにします。書き込みは許可。`--owner` と一緒に使います。UID はコネクタの `/connect/identity` の uid。
+  連携の画面を通しません。例: `npm run seed:emu -- --owner --connector UID`）。
 - 2つのブラウザ（または、ふつうの窓とシークレットの窓）で同じアカウントにログインすると、トップ（届いた版の一覧のカード）とヘッダーの同期の表示を
   見比べられます。既読・「知ってる」は、画面の操作（カードを押して詳細を開く・詳細の［知ってる］）か、console で `__ts.markRead('話題の id')`・
   `__ts.know('語の id')`（話題の id はカードの `data-topic-id`）。もう片方のブラウザに移ります。詳細の［知ってる］は押した時には書かず、

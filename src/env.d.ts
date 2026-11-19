@@ -12,3 +12,9 @@ interface ImportMetaEnv {
    */
   readonly VITE_E2E_OWNER_LOCK?: string
 }
+
+/**
+ * ビルドの時に埋め込む値（vite.config.ts の define。NS の src/env.d.ts から）: Claude 用のコネクタの origin
+ * （https://topic-studio-connector.….workers.dev。connector.local.json か VITE_CONNECTOR_ORIGIN。未設定は空）
+ */
+declare const __CONNECTOR_ORIGIN__: string
