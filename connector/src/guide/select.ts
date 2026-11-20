@@ -3,7 +3,7 @@
 // - ジャンルの割り振りの表の「多い出どころ」・世界の出どころ・市民メディアの出どころ・電文の出どころ（jma-xml）の重大印の目安の見出しは、出どころの data
 //   （connector/src/fetch/sources.ts の hints・body。電文の出どころは jmaSourceOf）と種類の表（connector/src/fetch/jma.ts の JMA_KINDS）から差し込む。
 //   この文の中に出どころの名前を書き込まない（出どころを足した時に決まりの文も合う）
-// - 分け方で迷った例の答えは GENRE_EXAMPLES（Q15 の今の決め方 A。答えで替わるのはこの並びだけ）
+// - 分け方で迷った例の答えは GENRE_EXAMPLES（Q15 の答え A。2026-11-20 に決まった。変える時に直すのはこの並びだけ）
 // - モデルの名前・人の名前・本物の記事の言葉は書かない
 import { GENRE_LABELS } from '../../../src/domain/fixedTexts'
 import { RECORD_NORMS } from '../../../src/domain/limits'
@@ -42,7 +42,7 @@ export const GENRE_ROWS: readonly { genre: Genre; what: string }[] = [
   },
 ]
 
-/** 分け方で迷った例と今の答え（Q15 の今の決め方 A。答えで替わるのはこの並びだけ） */
+/** 分け方で迷った例と今の答え（Q15 の答え A。2026-11-20 に決まった。変える時に直すのはこの並びだけ） */
 export const GENRE_EXAMPLES: readonly string[] = [
   '交通の障害は、原因が工事でも事故・事件',
   'AI の企業のトップの不祥事は、AI が主題でなければ経済',

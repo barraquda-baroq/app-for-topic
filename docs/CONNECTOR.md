@@ -54,7 +54,7 @@ NS のコネクタを準備した時と同じパソコンで行うと、Node.js 
 1. **Node.js を入れる**（NS で入れていれば済んでいます。22 以上なら動きます）
    - Windows・Mac とも <https://nodejs.org/ja> から 24 LTS を入れる。PowerShell・ターミナルで `node -v` が `v22` 以上なら OK
      （Windows で初めての時は docs/DEPLOY.md の 1 の 1 の `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` も）
-2. **Cloudflare のアカウントを確かめる**（NS と同じアカウントを使います。作者の答え Q9 の今の決め方。済んでいます）
+2. **Cloudflare のアカウントを確かめる**（NS と同じアカウントを使います。作者の答え Q9 は A。2026-11-20 に決まった。済んでいます）
    - 2段階認証がオンか、workers.dev のサブドメインが決まっているかを、左のメニューの「Workers & Pages」で確かめます
      （コネクタの URL が `https://topic-studio-connector.<サブドメイン>.workers.dev` になります）。
      資料の控えと下書きを置く場所なので、2段階認証は必須です
