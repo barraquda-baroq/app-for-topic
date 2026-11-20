@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import { RUN_ID_RE } from '../../../src/domain/ids'
 import { fakeRecordsOf, makeFakeEdition } from '../../../src/test/fixtures/fakeEditions'
-import type { VaultCore } from '../../src/vault/core'
+import type { ToolCallContext, VaultCore } from '../../src/vault/core'
 import {
   COLLECT_DAILY_LIMIT,
   finishRun,
@@ -13,6 +13,7 @@ import {
   RUN_DAILY_LIMIT,
   RUN_KINDS,
   TOOL_RUN_KINDS,
+  useRun,
   type FetchWork,
 } from '../../src/vault/runs'
 import { TOOL_DEFS } from '../../src/mcp/tools'
@@ -208,6 +209,25 @@ describe('回を使う（種類・期限・終わった回）', () => {
     expect(core.store.getRun(other)).toBeNull()
     expect(core.store.getRun(runId)).toBeNull()
     expect((await core.callTool('topic_list_drafts', { runId: other }, { grant })).text).toContain('この回は見つかりません')
+  })
+
+  it('回の道具の呼び出しを数える（回を始めた呼び出しも1回。1つの呼び出しで回を何度読んでも1回。runId を渡さない呼び出し・断った呼び出しは数えない）', async () => {
+    const { core, grant } = await setup(jst(10, 16))
+    const runId = runIdOf((await begin(core, grant, { kind: 'correction' })).text)
+    expect(core.store.runCount(runId, 'calls')).toBe(1)
+    // topic_status(runId)・topic_lookup_terms(runId) は回を読む
+    await core.callTool('topic_status', { runId }, { grant })
+    await core.callTool('topic_lookup_terms', { runId, words: ['作り物の語'] }, { grant })
+    expect(core.store.runCount(runId, 'calls')).toBe(3)
+    // runId を取らない道具・種類で断った呼び出し（訂正だけの回の下書きの一覧）は数えない
+    await core.callTool('topic_list_recent', {}, { grant })
+    expect((await core.callTool('topic_list_drafts', { runId }, { grant })).isError).toBe(true)
+    expect(core.store.runCount(runId, 'calls')).toBe(3)
+    // 1つの呼び出し（同じ ctx）の中で回を何度読んでも1回
+    const ctx = { tool: 'topic_read_article', now: jst(10, 20) } as unknown as ToolCallContext
+    useRun(core.store, ctx, runId)
+    useRun(core.store, ctx, runId)
+    expect(core.store.runCount(runId, 'calls')).toBe(4)
   })
 
   it('版か作れなかった印の後（finishRun）は、候補・控え・下書き・数え・新しい語・probe を消し、覚え書きだけ残す', async () => {

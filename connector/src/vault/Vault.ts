@@ -5,7 +5,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import { vaultConfig, type Env } from '../env'
 import { logError } from '../log'
-import { VaultCore, type CallOptions, type GrantProps, type HealthState, type PairingCheck } from './core'
+import { VaultCore, type CallOptions, type GrantProps, type HealthState, type PairingCheck, type VaultDeps } from './core'
 import { ConnectorError, MESSAGES } from './errors'
 import type { RateKind, RateResult } from './ratelimit'
 import type { SqlRunner, SqlValue } from './store'
@@ -30,7 +30,17 @@ export class Vault extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
-    this.#core = new VaultCore({
+    // 渡す物は、作った型（new.target）の coreDeps から（E2E のテストの入口の子の型が替える）
+    this.#core = new VaultCore((new.target as typeof Vault).coreDeps(ctx, env))
+  }
+
+  /**
+   * VaultCore に渡す物。本番は既定の社の一覧・出どころの data・グローバルの fetch を使う（outlets・fetchWork・sourceFetch を渡さない）。
+   * E2E のテストの入口（test/e2e/worker.ts）は、この型の子の型でここだけを替え、作り物の社・出どころの3つを足す（設計の 7. の「E2E」）。
+   * static にしたのは、RPC の口（型の関数）に出さないため
+   */
+  static coreDeps(ctx: DurableObjectState, env: Env): VaultDeps {
+    return {
       sql: doSql(ctx.storage),
       fetch: (input, init) => fetch(input, init),
       config: vaultConfig(env),
@@ -39,7 +49,7 @@ export class Vault extends DurableObject<Env> {
         if (at === null) void ctx.storage.deleteAlarm()
         else void ctx.storage.setAlarm(at)
       },
-    })
+    }
   }
 
   /** RPC では例外を投げず、結果で返す（workerd が「受け取られない例外」として記録しないように） */

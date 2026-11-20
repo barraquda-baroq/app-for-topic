@@ -1,18 +1,27 @@
 // 準備・公開・確かめのスクリプトの部品（Cloudflare にはつながない）と、公開する形の中身（NS の connector/test/unit/scripts.test.ts を写し、
-// TS の名前・禁じる物にした。docs/CONNECTOR.md の手順の番号の確かめは、手順書ができてから足す）。
+// TS の名前・禁じる物にした）。手順書（docs/CONNECTOR.md）の確かめ: wrangler のコマンドの Worker の名前・DCR の案内・1-A の手順と
+// スクリプトとコネクタの文が指す所・同意の画面の文・ツールの一覧・出どころ・接続の数と上限。仕様書の 7.7 のルールの文が firestore.rules と同じか。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { MAX_CONNECTIONS } from '../../../src/claude/pairing'
+import { RECORD_NORMS } from '../../../src/domain/limits'
 import { FAKE_OUTLET_NAMES } from '../../../src/test/fixtures/fakeOutlets'
+import { CONSENT_CAN, CONSENT_CANNOT, CONSENT_SOURCES } from '../../src/auth/consentPage'
 import { vaultConfig, workerConfig } from '../../src/config'
+import { ANTHROPIC_AGENTS, USER_AGENT } from '../../src/fetch/aiAgents'
+import { DEFAULT_SOURCES, PENDING_HOSTS } from '../../src/fetch/sources'
+import { TOOL_DEFS } from '../../src/mcp/tools'
+import { RATE_LIMITS } from '../../src/vault/ratelimit'
 // prettier-ignore
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { MISSING_CONNECTOR_DEPS, OAUTH_KV_TITLE, WORKER_NAME, answerIsYes, appBuildEnv, dcrEnabledInConfig, deployVarArgs, ensureTokenKey, isConnectorOrigin, missingLocalNotice, newTokenKey, parseWorkersUrl, readLocalConfig, wranglerProblem, wranglerProblemHint, writeLocalConfig } from '../../scripts/lib.mjs'
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
 import { checkConnector, parseCheckArgs } from '../../scripts/check.mjs'
+// prettier-ignore
 // @ts-expect-error スクリプトは JavaScript（型の宣言なし）
-import { bundleCheck, bundleProblems, fakeOutletNames, forbiddenTexts, textProblems } from '../../scripts/bundle-check.mjs'
+import { bundleCheck, bundleProblems, fakeOutletNames, forbiddenTexts, textProblems, unescapeBundle } from '../../scripts/bundle-check.mjs'
 
 const connectorDir = path.resolve(import.meta.dirname, '../..')
 const repoDir = path.resolve(connectorDir, '..')
@@ -75,6 +84,217 @@ describe('CI（.github/workflows/ci.yml）', () => {
     const ignore = fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8').split('\n')
     for (const s of ['connector.local.json', 'connector/dist', 'connector/.wrangler', 'connector/.dev.vars'])
       expect(ignore, s).toContain(s)
+  })
+})
+
+describe('docs/CONNECTOR.md（手順書）', () => {
+  const doc = fs.readFileSync(path.join(repoDir, 'docs/CONNECTOR.md'), 'utf8')
+  const read = (rel: string) => fs.readFileSync(path.join(connectorDir, rel), 'utf8')
+  /** 表の行の頭の欄が text（整形で欄の後ろに空白が入っても当たる） */
+  const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const cells = (...texts: string[]) => new RegExp(`^\\|${texts.map((t) => ` ${esc(t)} *\\|`).join('')}`, 'm')
+  /** 見出しの節（## n. の見出しから、次の ## まで） */
+  const section = (title: string) => {
+    const at = doc.indexOf(`\n## ${title}`)
+    expect(at, title).toBeGreaterThan(0)
+    const next = doc.indexOf('\n## ', at + 1)
+    return doc.slice(at, next < 0 ? undefined : next)
+  }
+
+  it('リポジトリの直下で動かす wrangler のコマンドには、Worker の名前を付ける（直下には wrangler.jsonc が無い）', () => {
+    const name = /"name"\s*:\s*"([^"]+)"/.exec(read('wrangler.jsonc'))?.[1]
+    expect(name).toBe(WORKER_NAME)
+    const commands = [...doc.matchAll(/`(npx --prefix connector wrangler (?:delete|secret delete)[^`]*)`/g)].map((m) => m[1])
+    expect(commands.length).toBeGreaterThanOrEqual(2)
+    for (const c of commands) expect(c, c).toContain(`--name ${name}`)
+    // KV の名前も wrangler が作る名前（lib.mjs の OAUTH_KV_TITLE）
+    expect(doc).toContain(`\`${OAUTH_KV_TITLE}\``)
+  })
+
+  it('DCR は connector.local.json の "enableDcr": true で有効にする（Git に入る wrangler.jsonc を書き換えない）', () => {
+    expect(doc).toContain('"enableDcr": true')
+    expect(doc).not.toMatch(/wrangler\.jsonc` の `ENABLE_DCR` を `"true"` にして/)
+    // wrangler.jsonc の注釈も同じ所を指す
+    expect(read('wrangler.jsonc')).toContain('connector.local.json に "enableDcr": true を足す')
+  })
+
+  it('準備のスクリプト・コネクタの案内が指す 1-A の手順（匿名ログイン・準備のスクリプト・claude.ai への登録）と節の名前がある', () => {
+    const handSteps = doc.slice(doc.indexOf('### 1-A.'), doc.indexOf('### 1-B.'))
+    expect(handSteps.length).toBeGreaterThan(100)
+    const stepOf = (re: RegExp) => Number(new RegExp(`^(\\d+)\\. \\*\\*${re.source}`, 'm').exec(handSteps)?.[1])
+    const anon = stepOf(/Firebase で匿名ログインを有効にする/)
+    const script = stepOf(/準備のスクリプトを動かす/)
+    const register = stepOf(/claude\.ai への登録/)
+    expect(anon).toBeGreaterThan(0)
+    expect(script).toBeGreaterThan(anon)
+    expect(register).toBeGreaterThan(script)
+    // 手順の番号は 1 から抜けずに並ぶ（スクリプトの文が番号でなく名前で指すので、番号を変えても文は替えなくてよい）
+    const numbers = [...handSteps.matchAll(/^(\d+)\. \*\*/gm)].map((m) => Number(m[1]))
+    expect(numbers).toEqual(numbers.map((_, i) => i + 1))
+    // 匿名ログインの手順の後ろの「つながらない時」の行が、その番号を指す
+    expect(section('6. つながらない時')).toContain(`1-A の手順 ${anon} をやり直して`)
+    const setup = read('scripts/setup.mjs')
+    for (const s of ['docs/CONNECTOR.md の 1-A', '1-A の匿名ログインの手順', '1-A の claude.ai への登録から'])
+      expect(setup, s).toContain(s)
+    // 確かめで止まった時は、アプリとアクセスルールを公開していないので、check ではなく setup をやり直す
+    expect(setup).toContain('アプリとアクセスルールはまだ公開していません')
+    expect(doc).toContain('アプリとアクセスルールはまだ公開されていません')
+    expect(read('src/vault/errors.ts')).toContain('docs/CONNECTOR.md の 1-A）')
+    // lib.mjs の KV の直し方が指す節
+    expect(read('scripts/lib.mjs')).toContain('docs/CONNECTOR.md の「やめる時・止める時」')
+    expect(doc).toMatch(/^## \d+\. やめる時・止める時$/m)
+    // 手順書の名前と場所（アプリの設定の［手順を見る］のリンクと「まだ用意されていません」の文）
+    const settings = fs.readFileSync(path.join(repoDir, 'src/features/claude/ClaudeSettings.tsx'), 'utf8')
+    expect(settings).toMatch(/CONNECTOR_GUIDE_URL = '[^']*\/docs\/CONNECTOR\.md'/)
+    expect(settings).toContain("CONNECTOR_UNSET_TEXT = 'コネクタはまだ用意されていません（docs/CONNECTOR.md）'")
+  })
+
+  it('同意の画面と同じ「できること・できないこと」と資料の出どころの1行', () => {
+    const intro = doc.slice(0, doc.indexOf('## 仕組み'))
+    expect(intro).toContain(`Claude ができること: ${CONSENT_CAN.join('／')}`)
+    expect(intro).toContain(`Claude ができないこと: ${CONSENT_CANNOT.join('／')}`)
+    // 同意の画面にだけあった1行（設計に無い）を、手順書の 1-A の許可の手順にも同じ文で書く
+    const handSteps = doc.slice(doc.indexOf('### 1-A.'), doc.indexOf('### 1-B.'))
+    expect(handSteps).toContain(`「${CONSENT_SOURCES}」`)
+    expect(read('src/auth/consentPage.ts')).toContain('${escapeHtml(CONSENT_SOURCES)}')
+  })
+
+  it('ツールの一覧に、コネクタのツールが全部、同じ題で並ぶ（数も）', () => {
+    const table = section('2. 試す')
+    for (const t of TOOL_DEFS) expect(table, t.name).toMatch(cells(`\`${t.name}\``, t.title))
+    const rows = [...table.matchAll(/^\| `(topic_[a-z_]+)` +\|/gm)].map((m) => m[1])
+    expect(rows).toEqual(TOOL_DEFS.map((t) => t.name))
+    const reads = TOOL_DEFS.filter((t) => t.kind === 'read').length
+    expect(doc).toContain(`読む ${reads}・足す ${TOOL_DEFS.length - reads}`)
+    expect(doc).toContain(`${TOOL_DEFS.length}のツールを全部「常に許可」`)
+  })
+
+  it('出どころの節に、data の出どころの名前とホストが全部ある（取らない所も）', () => {
+    const sources = section('9. 出どころ')
+    for (const s of DEFAULT_SOURCES) {
+      expect(sources, s.id).toMatch(cells(s.outlet))
+      for (const h of [...s.hosts.list, ...s.hosts.body]) expect(sources, h).toContain(`\`${h}\``)
+    }
+    expect(sources).toContain(`使っている${DEFAULT_SOURCES.length}つ`)
+    for (const p of PENDING_HOSTS) expect(sources, p.id).toContain(p.name)
+    // 名乗りと、断れば取らない Claude・Anthropic の名前は、部品と同じ
+    expect(doc).toContain(`\`${USER_AGENT}\``)
+    for (const a of ANTHROPIC_AGENTS) expect(doc, a).toContain(`\`${a}\``)
+  })
+
+  it('接続の数と接続の要求の上限・数の門は、コードと同じ数を書く', () => {
+    expect(doc).toContain(`照合済みの下書きが${RECORD_NORMS.editionGate}本そろうまで話題を足せません`)
+    expect(doc).toContain(`照合済みが${RECORD_NORMS.editionGate}本そろってから`)
+    const a = RATE_LIMITS.authorize
+    expect(MAX_CONNECTIONS).toBe(2)
+    expect(doc).toContain(`接続が${MAX_CONNECTIONS}あります（同時に${MAX_CONNECTIONS}まで）`)
+    expect(doc).toContain(
+      `1つのネットワークから1時間${a.source?.perHour}回・1日${a.source?.perDay}回まで、コネクタ全体で1日${a.global.perDay}回まで`,
+    )
+  })
+
+  it('手順書に書いた npm のコマンド・node で動かすスクリプトは、package.json とリポジトリにある（README・DEPLOY.md・SCHEDULE.md も）', () => {
+    const pkg = (rel: string) => Object.keys(JSON.parse(fs.readFileSync(path.join(repoDir, rel), 'utf8')).scripts)
+    const rootScripts = new Set(pkg('package.json'))
+    const connectorScripts = new Set(pkg('connector/package.json'))
+    const docs = ['docs/CONNECTOR.md', 'docs/SCHEDULE.md', 'docs/DEPLOY.md', 'README.md', 'connector/README.md']
+    let count = 0
+    for (const rel of docs) {
+      const text = fs.readFileSync(path.join(repoDir, rel), 'utf8')
+      for (const m of text.matchAll(/npm (--prefix connector )?run ([a-z][\w:-]*)/g)) {
+        count++
+        expect((m[1] ? connectorScripts : rootScripts).has(m[2]), `${rel}: ${m[0]}`).toBe(true)
+      }
+      for (const m of text.matchAll(/\bnode ((?:connector\/)?scripts\/[\w.-]+\.mjs)/g))
+        expect(fs.existsSync(path.join(repoDir, m[1])), `${rel}: ${m[0]}`).toBe(true)
+      for (const m of text.matchAll(/npx vitest run ([\w./-]+\.test\.m?[jt]s)/g))
+        expect(fs.existsSync(path.join(repoDir, m[1])), `${rel}: ${m[0]}`).toBe(true)
+    }
+    expect(count).toBeGreaterThan(20)
+    // 準備・確かめ・公開・テストの命令は、手順書に必ず出る
+    for (const name of ['connector:setup', 'connector:check', 'deploy', 'test:connector', 'test:connector:emu'])
+      expect(doc, name).toContain(`npm run ${name}`)
+  })
+
+  it('「つながらない時」の表の、出ること（「…」）は、コネクタ・スクリプト・アプリの文と依頼文の報告の形にある（claude.ai・Cloudflare・npm・git の文を除く）', () => {
+    const walk = (dir: string): string[] =>
+      (fs.readdirSync(dir, { recursive: true }) as string[])
+        .filter((f) => /\.(ts|tsx|mjs)$/.test(f) && !/\.test\./.test(f))
+        .map((f) => fs.readFileSync(path.join(dir, f), 'utf8'))
+    // コードの中の ${…} は値が入る所なので、区切りにする
+    const code = [
+      ...walk(path.join(connectorDir, 'src')),
+      ...walk(path.join(connectorDir, 'scripts')),
+      ...walk(path.join(repoDir, 'src')),
+      fs.readFileSync(path.join(repoDir, 'scripts/deploy.mjs'), 'utf8'),
+      // 定期実行の報告の言葉は、依頼文（docs/SCHEDULE.md）の報告の形
+      fs.readFileSync(path.join(repoDir, 'docs/SCHEDULE.md'), 'utf8'),
+    ]
+      .join('\n')
+      .replace(/\$\{[^}]*\}/g, '\u0000')
+    /** ほかの物が出す文（claude.ai・Cloudflare・PowerShell・git） */
+    const outside = ['Authorization with the MCP server failed', 'Exceeded CPU', 'npm.ps1', 'Your local changes']
+    const table = section('6. つながらない時')
+    const said = [...table.matchAll(/^\| ([^|]*?) *\|/gm)].flatMap((m) => [...m[1].matchAll(/「([^「」]+)」/g)].map((q) => q[1]))
+    expect(said.length).toBeGreaterThan(15)
+    for (const s of said) {
+      if (outside.some((o) => s.includes(o))) continue
+      // 「…」・値（数・名前）の所で区切った、4字以上の切れ端が、どれもコードの文にある
+      const parts = s
+        .split(/…|（[^）]*）|\d[\d,]*|topic-studio-connector-oauth-kv/)
+        .map((p) => p.trim())
+        .filter((p) => p.length >= 4)
+      expect(parts.length, s).toBeGreaterThan(0)
+      for (const p of parts) expect(code.includes(p), `${s}（${p}）`).toBe(true)
+    }
+  })
+
+  it('「すぐに止める」には、Firebase に繋がらない間・無料枠を使い切った間の例外と、すぐに切る方法を添える', () => {
+    const row = doc.split('\n').find((l) => cells('すぐに止める').test(l))
+    expect(row).toContain('無料枠を使い切った間')
+    expect(row).toContain('「カスタマイズ → コネクタ → Topic Studio」でもコネクタを削除する')
+    // モデルの id・メールの住所・リポジトリの外の人の名前は書かない
+    expect(doc).not.toMatch(/claude-[a-z0-9.-]*\d/i)
+    expect(doc).not.toMatch(/[\w.+-]+@[\w-]+\.[a-z]{2,}/i)
+  })
+})
+
+describe('docs/SPEC.md の 7.7（ルールの文）', () => {
+  it('コネクタの部分の関数と config/connector の決まりは、firestore.rules と同じ文（注釈を除く）', () => {
+    const rules = fs.readFileSync(path.join(repoDir, 'firestore.rules'), 'utf8')
+    const spec = fs.readFileSync(path.join(repoDir, 'docs/SPEC.md'), 'utf8')
+    const at = spec.indexOf('#### ルール（段階3のコネクタの部分）')
+    expect(at).toBeGreaterThan(0)
+    const part = spec.slice(at, spec.indexOf('#### コネクタの認証のしかた', at))
+    const code = (text: string) =>
+      text
+        .split('\n')
+        .map((l) => l.replace(/\s*\/\/.*$/, '').trimEnd())
+        .filter((l) => l.trim() !== '')
+    /** 関数か match の塊（頭の行から、同じ字下げの } まで） */
+    const blockOf = (text: string, head: string) => {
+      const lines = code(text)
+      const i = lines.findIndex((l) => l.trim().startsWith(head))
+      expect(i, head).toBeGreaterThanOrEqual(0)
+      const indent = lines[i].length - lines[i].trimStart().length
+      const j = lines.findIndex((l, k) => k > i && l === `${' '.repeat(indent)}}`)
+      return lines.slice(i, j + 1).map((l) => l.trim())
+    }
+    for (const head of [
+      'function isConnector(uid)',
+      'function connectorCreate(docId)',
+      'function validConnection(c)',
+      'function validConnector()',
+      'function newApproval()',
+      'match /config/connector',
+    ])
+      expect(blockOf(part, head), head).toEqual(blockOf(rules, head))
+    // records の読みと作る・直す
+    const records = blockOf(rules, 'match /users/{uid}/records/{docId}')
+    const specRecords = blockOf(part, 'match /users/{uid}/records/{docId}')
+    for (const l of records.filter((l) => !l.startsWith('allow delete') && !/^&& (expirableRecord|expiredDay)/.test(l)))
+      expect(specRecords, l).toContain(l)
+    expect(part).toContain('allow get: if isOwner(uid) || isConnector(uid);')
   })
 })
 
@@ -364,6 +584,13 @@ describe('公開する形（wrangler deploy --dry-run）', () => {
     expect(textProblems(code, texts)).toEqual(expect.arrayContaining(['FAKE_', 'Mozilla/', names[0]]))
     expect(textProblems('const credit = "出典: △△庁「題」・□□ボイス"', forbiddenTexts())).toEqual(['△△庁', '□□ボイス'])
     expect(textProblems('const ua = "topic-studio-connector"', texts)).toEqual([])
+    // wrangler（esbuild）は ASCII でない文字を \uXXXX（大文字の16進）に書き換えて出す。書き換えた形でも見つける
+    const escaped = (t: string) =>
+      Array.from(t)
+        .map((c) => `\\u${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`)
+        .join('')
+    expect(textProblems(`const site = "${escaped('△△庁')}"; const b = "\\u{1F600}"`, forbiddenTexts())).toEqual(['△△庁'])
+    expect(unescapeBundle(`"${escaped('〇〇省')}"・"\\u{4E00}"`)).toBe('"〇〇省"・"一"')
     // 読めない時は空（名前のほかの文字は見る）
     expect(fakeOutletNames(path.join(tmp('ts-fake-'), 'none.ts'))).toEqual([])
   })

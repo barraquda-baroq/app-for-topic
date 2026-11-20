@@ -2,7 +2,8 @@
 // 「できる事・できない事」の文を TS の物にした）。
 // クライアントの名前・確かめた公開元・戻り先は、クライアントが決めた文字なので必ずエスケープする。
 // できる事・できない事の文（CONSENT_CAN・CONSENT_CANNOT）は、アプリの連携の画面（src/features/claude/claudeUi.ts の CLAUDE_CAN・
-// CLAUDE_CANNOT）と同じ文にする（設計の 3.1。テストで比べる）
+// CLAUDE_CANNOT）と同じ文にする（設計の 3.1。テストで比べる）。資料の出どころの1行（CONSENT_SOURCES）は手順書 docs/CONNECTOR.md と同じ文
+// （NS に無い1行。作者がどこから資料を取るかを、同意の前に見られるように）
 import type { ConsentDescription } from '@cloudflare/workers-oauth-provider'
 import { escapeHtml, page } from '../http'
 
@@ -14,6 +15,12 @@ export const CONSENT_CAN: readonly string[] = [
 
 /** Claude ができない事 */
 export const CONSENT_CANNOT: readonly string[] = ['消す・直す', '既読など読み手の記録を読む', 'アプリの設定を変える']
+
+/**
+ * 資料の出どころの1行（サーバーの説明の 1. と同じ事。手順書 docs/CONNECTOR.md の頭と 1-A にも同じ文を書く。
+ * connector/test/unit/scripts.test.ts が比べる）
+ */
+export const CONSENT_SOURCES = '資料は、作者が許した出どころ（府省・庁の発表と Global Voices）だけを、コネクタが取りに行きます。'
 
 export function consentPage(details: ConsentDescription, handle: string, appOrigin: string, headers: Headers): Response {
   const name = escapeHtml(details.clientName || 'Claude')
@@ -35,7 +42,7 @@ export function consentPage(details: ConsentDescription, handle: string, appOrig
     <li data-testid="consent-can">Claude ができること: ${items(CONSENT_CAN)}</li>
     <li data-testid="consent-cannot">Claude ができないこと: ${items(CONSENT_CANNOT)}</li>
   </ul>
-  <p class="muted">資料は、作者が許した出どころ（府省・庁の発表と Global Voices）だけを、コネクタが取りに行きます。</p>
+  <p class="muted">${escapeHtml(CONSENT_SOURCES)}</p>
   <p class="warn">この画面は claude.ai で「接続」を押した直後にだけ出ます。心当たりがなければ［やめる］を押してください。</p>
 </div>
 <form method="post" action="/authorize">

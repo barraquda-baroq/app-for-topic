@@ -4,8 +4,8 @@ name: CI
 # ビルドにテスト用の入口と作り物の版が無いことの確かめ・E2E（docs/SPEC.md の 14.7・16.3・17.3）。DS の .github/workflows/ci.yml から、WebKit の
 # 調べ（webkit-diag）を外した物。持ち主の関所と同期の E2E（エミュレーターにつないだ開発サーバー）は、別の仕事 e2e-sync で test と同時に流す。
 # 段階1の test:sync は src/**/*.emu.test.ts（持ち主の関所・アクセスルール・2台の同期・段階0からの上がり）、test:e2e:sync は
-# e2e/*.sync.spec.ts（持ち主の関所・作り物の版の受け取りと2つのブラウザの既読・知ってる）。どちらも設定のファイルの名前の形で拾うので、
-# 同じ形の名前で足したテストはここを直さなくても流れる。
+# e2e/*.sync.spec.ts（持ち主の関所・作り物の版の受け取りと2つのブラウザの既読・知ってる・段階3の Claude 用のコネクタとの連携の通し）。
+# どちらも設定のファイルの名前の形で拾うので、同じ形の名前で足したテストはここを直さなくても流れる。
 # CI のログに記事の本文を出さない（docs/SPEC.md の 3.。段階1のデータは作り物の版だけ（〇〇市・https://example.com/…）で、テストのアカウントも作り物だけ）。
 # 段階3で Claude 用のコネクタ（connector/。NS の形）の部品・型・テスト・公開する形の確かめを足した（設計の 7. の「CI」）。CI は府省・庁や
 # Global Voices のサイトへ出ない（コネクタのテストの fetch は connector/test/support/netGuard.ts が見張り、手元のエミュレーターのほかへ出たら落とす。
@@ -130,9 +130,13 @@ jobs:
 
   # 持ち主の関所と同期の E2E（docs/SPEC.md の 14.4・14.7・16.3）。Firebase エミュレーターにつないだ開発サーバーで、記録が無い時・
   # 別のアカウント・まだ持ち主だと確かめていないアカウントで電波が無い時（e2e/owner-gate.sync.spec.ts）と、エミュレーターに入れる道具
-  # （npm run seed:emu）で入れた作り物の版がトップに出る事・2つのブラウザで既読と「知ってる」が移る事（e2e/data.sync.spec.ts）を
-  # Chromium で流す（playwright.sync.config.ts。開発サーバーだけの VITE_E2E_OWNER_LOCK=1 で、エミュレーターでも本番と同じに持ち主を
-  # 確かめる）。test の仕事と同時に流す
+  # （npm run seed:emu）で入れた作り物の版がトップに出る事・2つのブラウザで既読と「知ってる」が移る事（e2e/data.sync.spec.ts）と、
+  # Claude 用のコネクタとの連携の通し（e2e/pairing.sync.spec.ts。段階3の設計の 7. の「E2E」: 接続 → 同意 → 許可 → トークン → 道具
+  # （試しの回・版の回）→ トップに版と出典の表示 → 書き込みの停止 → 2つ目の接続 → 解除）を Chromium で流す（playwright.sync.config.ts。
+  # 開発サーバーだけの VITE_E2E_OWNER_LOCK=1 で、エミュレーターでも本番と同じに持ち主を確かめる）。連携の通しのコネクタは、テストが
+  # wrangler の createTestHarness で立ち上げる E2E のテストの入口（connector/wrangler.e2e.jsonc。本番の入口のまま、Vault だけが作り物の
+  # 社・出どころで動く）で、府省・庁や Global Voices のサイトへは出ない（その Worker の fetch は手元のエミュレーターのほかへ出さない。
+  # miniflare が Cloudflare から Request.cf の見本を取りに行くのもテストが止める）。test の仕事と同時に流す
   e2e-sync:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -146,7 +150,8 @@ jobs:
             package-lock.json
             connector/package-lock.json
       - run: npm ci
-      # 連携の通しの E2E（e2e/pairing.sync.spec.ts。段階3の後の塊で足す）が本物のコネクタを動かすので、コネクタの部品も入れる
+      # 連携の通しの E2E（e2e/pairing.sync.spec.ts）が本物のコネクタ（wrangler・workerd）を動かすので、コネクタの部品も入れる
+      # （無ければ CI ではそのテストが飛ばずに落ちる）
       - run: npm --prefix connector ci
       # Firebase エミュレーター（firebase-tools 15）は Java 21 以上が要る（test の仕事と同じ）
       - uses: actions/setup-java@v4
@@ -171,7 +176,7 @@ jobs:
             sleep 60
           done
           exit 1
-      - name: 持ち主の関所と同期の E2E（Firebase エミュレーター）
+      - name: 持ち主の関所・同期・コネクタとの連携の通しの E2E（Firebase エミュレーター）
         run: npm run test:e2e:sync
       - uses: actions/upload-artifact@v4
         if: failure()

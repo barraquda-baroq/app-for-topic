@@ -72,9 +72,23 @@ export function bundleProblems(sources, repoRoot) {
   return { problems, app }
 }
 
-/** まとめた中身（code）に入っている、入ってはいけない文字 */
+/**
+ * まとめた中身の \uXXXX・\u{XXXXX} の書き換えを戻す。wrangler（esbuild）は ASCII でない文字を \uXXXX（16進は大文字）に書き換えて出すので、
+ * そのままでは日本語の名前（作り物の社の名前）を見つけられない
+ */
+export function unescapeBundle(code) {
+  return code
+    .replace(/\\u\{([0-9a-fA-F]{1,6})\}/g, (m, h) => {
+      const n = parseInt(h, 16)
+      return n <= 0x10ffff ? String.fromCodePoint(n) : m
+    })
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+}
+
+/** まとめた中身（code）に入っている、入ってはいけない文字（書き換えたままの形と、書き換えを戻した形の両方で見る） */
 export function textProblems(code, texts = forbiddenTexts()) {
-  return texts.filter((t) => code.includes(t))
+  const plain = unescapeBundle(code)
+  return texts.filter((t) => code.includes(t) || plain.includes(t))
 }
 
 export async function bundleCheck({ quiet = false } = {}) {

@@ -877,33 +877,45 @@ service cloud.firestore {
 - `firestore.emu.rules`: 上の `isOwner(uid)` を `isSelf(uid)`（`signedIn() && request.auth.uid == uid`）に替え、`config/connector` の get を `signedIn()` にした物（DS と同じ。開発サーバーは `config/owner` を作らないため。16.6 の 48）。テストは本番のルールを読み込んで持ち主の制限を確かめる。
 - 段階0の `owner.emu.test.ts` の「段階0のルール」は外し、段階1のルールのテストを `rules.emu.test.ts` に書いた（下の「ルールのテスト」）。
 
-#### ルール（段階3のコネクタの部分。案。段階1では入れない）
+#### ルール（段階3のコネクタの部分）
 
-段階1で固めるのは表の名前・id の形・外側の欄・置き場。ルールの中身は段階3で足す。
+段階3で `firestore.rules` に足した物（NS の `firestore.rules` の v2 の形。段階1で固めた表の名前・id の形・外側の欄・置き場は替えていない）。
+上の段階1の文のうち、`config/connector`（段階1は持ち主の get だけ）と records の `allow create, update:`（1つの式）は、この形に替えた。
+records の create と update を分け、コネクタに update を持たせない。`appDoc`・`expiredDay`・`expirableRecord`・`private`・`sync` は段階1のまま
+（`private` と `sync` にはコネクタの文字を書かない）。
 
 ```
-    // NS と同じ: 匿名のアカウントで、持ち主が config/connector に記録した物
+    function connectorPath() {
+      return /databases/$(database)/documents/config/connector;
+    }
+
+    // コネクタ（NS と同じ）: 匿名のアカウントで、持ち主（uid）が config/connector に記録したもの。持ち主自身・Google のアカウント・
+    // 記録されていない匿名のアカウントはコネクタにならない。持ち主の記録（config/owner）が無い時は、誰もコネクタにならない
     function isConnector(uid) {
       return signedIn()
         && request.auth.token.firebase.sign_in_provider == 'anonymous'
         && request.auth.uid != uid
         && ownerUid() == uid
-        && exists(/databases/$(database)/documents/config/connector)
-        && get(/databases/$(database)/documents/config/connector).data.uid == request.auth.uid;
+        && exists(connectorPath())
+        && get(connectorPath()).data.uid == request.auth.uid;
     }
 
-    // 作るだけ（NS の connectorCreate の形）。表ごとに id の形と json の上限
+    // 作るだけ（NS の connectorCreate の形）。外側の8つの欄・device は 'claude-connector'・updated はサーバー時刻・{表名}:{id}。
+    // 表ごとの id の形（expirableRecord と同じ形）と json の上限（RECORD_LIMITS.json と同じ値）。「書き込みを許可」の間だけ
     function connectorCreate(docId) {
       let d = request.resource.data;
       let ed = '20[0-9]{2}-[01][0-9]-[0-3][0-9]-(12|20)';
-      return get(/databases/$(database)/documents/config/connector).data.writes == true
+      return get(connectorPath()).data.writes == true
         && d.keys().hasOnly(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
         && d.keys().hasAll(['table', 'id', 'json', 'chunks', 'deleted', 'hash', 'updated', 'device'])
         && d.table in ['editions', 'topics', 'corrections', 'termPacks', 'editionFails']
-        && d.id is string && d.id.size() <= 64
+        && d.id is string && d.id.size() >= 1 && d.id.size() <= 64
         && docId == d.table + ':' + d.id
-        && d.device == 'claude-connector' && d.chunks == 0 && d.deleted == false
-        && d.json is string && d.hash is string && d.hash.size() <= 64
+        && d.device == 'claude-connector'
+        && d.chunks == 0
+        && d.deleted == false
+        && d.json is string
+        && d.hash is string && d.hash.size() <= 64
         && d.updated == request.time
         && (d.table != 'editions' || (d.id.matches('^' + ed + '$') && d.json.size() <= 20000))
         && (d.table != 'topics' || (d.id.matches('^' + ed + '-[0-9a-z]{8}$') && d.json.size() <= 100000))
@@ -912,16 +924,88 @@ service cloud.firestore {
         && (d.table != 'editionFails' || (d.id.matches('^' + ed + '-[0-9a-z]{8}$') && d.json.size() <= 2000));
     }
 
+    // 連携の記録（NS の v2 の形をそのまま写した。src/claude/pairing.ts）。接続は2まで（NS は10。KV の書き込みの最悪の数を NS と
+    // 合わせて無料の枠の中に収めるため）。ルールは map の中を順に見られないので、新しく許可した接続（pairingCid）だけ形を確かめる
+    function validConnection(c) {
+      return c is map
+        && c.keys().hasOnly(['name', 'pairing', 'pairedAt', 'approvedOn'])
+        && c.keys().hasAll(['name', 'pairing', 'pairedAt', 'approvedOn'])
+        && c.name is string && c.name.size() > 0 && c.name.size() <= 40
+        && c.pairing is string && c.pairing.size() <= 128
+        && c.pairedAt is timestamp
+        && c.approvedOn is string && c.approvedOn.size() <= 100;
+    }
+
+    function validConnector() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v', 'pairingCid', 'connections'])
+        && d.keys().hasAll(['uid', 'pairing', 'pairedAt', 'approvedOn', 'writes', 'v', 'pairingCid', 'connections'])
+        && d.uid is string && d.uid.size() > 0 && d.uid.size() <= 128 && d.uid != request.auth.uid
+        && d.pairing is string && d.pairing.size() <= 128
+        && d.pairedAt is timestamp
+        && d.approvedOn is string && d.approvedOn.size() <= 100
+        && d.writes is bool
+        && d.v == 2
+        && d.pairingCid is string && d.pairingCid.matches('^c[0-9a-z]{1,31}$')
+        && d.connections is map && d.connections.size() >= 1 && d.connections.size() <= 2;
+    }
+
+    // 新しい許可（接続を足す・入れ替える）: 最後の許可の時刻と、その接続の指紋・時刻がそろう（時刻はサーバー時刻）
+    function newApproval() {
+      let d = request.resource.data;
+      return d.pairedAt == request.time
+        && d.pairingCid in d.connections
+        && validConnection(d.connections[d.pairingCid])
+        && d.connections[d.pairingCid].pairing == d.pairing
+        && d.connections[d.pairingCid].pairedAt == request.time;
+    }
+
+    match /config/connector {
+      // 無ければ連携していない（持ち主は無い事を読める）。コネクタは自分が記録された物だけを読める（持ち主の記録が無くても get できる）
+      allow get: if signedIn() && (ownerUid() == request.auth.uid || resource.data.uid == request.auth.uid);
+      allow create: if signedIn() && request.auth.uid == ownerUid() && validConnector() && newApproval();
+      allow update: if signedIn() && request.auth.uid == ownerUid() && (
+          // (i) 「書き込みを許可」だけ
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['writes']) && request.resource.data.writes is bool)
+          // (ii) 新しい許可（コネクタの身元は変えない。身元が変わった時は消して作り直す）
+          || (validConnector() && request.resource.data.uid == resource.data.uid && newApproval())
+          // (iii) 一覧の編集（名前を変える・1つ解除する）。身元・最後の許可の指紋・時刻・接続（pairingCid）は変えない
+          || (validConnector()
+            && request.resource.data.uid == resource.data.uid
+            && request.resource.data.pairing == resource.data.pairing
+            && request.resource.data.pairedAt == resource.data.pairedAt
+            && request.resource.data.pairingCid == resource.data.pairingCid));
+      // ［連携をすべて解除］
+      allow delete: if signedIn() && request.auth.uid == ownerUid();
+    }
+
     match /users/{uid}/records/{docId} {
-      // 読ませる表を並べる（DS 19.6）。records に後から足した表は、ここに足さない限り読めない
+      // 読ませる表を並べる（DS 19.6。src/domain/types.ts の CLAUDE_READ_TABLES と同じ並び。records に後から足した表は、ここに足さない限り
+      // 読めない。無い文書の get は通す）
       allow read: if isOwner(uid) || (isConnector(uid)
         && (resource == null || resource.data.table in ['editions', 'topics', 'corrections', 'termPacks', 'editionFails', 'knownTerms']));
-      allow create: if (isOwner(uid) && /* 段階1の knownTerms */ true) || (isConnector(uid) && connectorCreate(docId));
-      // update・delete は段階1のまま（コネクタには無い）
+      allow create: if (isOwner(uid)
+          && appDoc(docId, ['knownTerms'], 2000)
+          && request.resource.data.id.matches('^t[0-9a-z]{12}$'))
+        || (isConnector(uid) && connectorCreate(docId));
+      allow update: if isOwner(uid)
+        && appDoc(docId, ['knownTerms'], 2000)
+        && request.resource.data.id.matches('^t[0-9a-z]{12}$');
+      allow delete: 段階1のまま（持ち主が、30日を過ぎた物を id の形と日付で）;
     }
-    // users/{uid}/private は段階1のまま（コネクタの文字を書かない）
-    // users/{uid}/meta/app は get に isConnector(uid) を足す（形の版が違えばコネクタは書かない。NS）
+
+    match /users/{uid}/meta/app {
+      allow get: if isOwner(uid) || isConnector(uid);   // 形の版がコネクタの知る版と違えば、コネクタは書かない（NS と同じ）
+      // create・update は段階1のまま（持ち主だけ。下げられない）
+    }
 ```
+
+- 確かめは `src/sync/rules.emu.test.ts`（`npm run test:sync`）。`resource.data.table in [...]` の一覧の問い合わせと count（`runAggregationQuery`）が
+  エミュレーターで通る事を確かめたので、コネクタの写しは `table in [6つ]` で問い合わせる。コネクタの問い合わせの形の一覧（`CONNECTOR_QUERIES`）は
+  `src/test/connectorQueries.ts` に置き、ルールのテストが索引と照らし、コネクタの単体のテストがこの形しか組まない事を確かめる。
+- 読ませる表の並びは `src/domain/types.ts` の `CLAUDE_READ_TABLES`、接続の数は `src/claude/pairing.ts` の `MAX_CONNECTIONS`（2）と同じで、
+  どちらもテストがルールの文を読んで比べる。
+- `firestore.emu.rules` のコネクタの部分（`isConnector`・`connectorCreate`・`config/connector` の形）は本番と同じ文（替えるのは段階1と同じ2か所だけ）。
 
 | コネクタ | 版・話題・訂正・作れなかった印 | 辞書の束 | 知ってる | 既読 | データの形の版 |
 |---|---|---|---|---|---|
@@ -929,7 +1013,7 @@ service cloud.firestore {
 | 作る | 作るだけ（無い時だけ作る `exists: false`） | 作るだけ | できない | できない | できない |
 | 直す・消す | できない | できない | できない | できない | できない |
 
-- ルールは絞り込みの代わりにならないので、コネクタの一覧の問い合わせは `table in [...]`（か表ごとの `==`）を必ず付ける。`resource.data.table in [...]` が `in` の問い合わせで通るかは、段階3にエミュレーターで確かめる（通らなければ表ごとに `==` で問い合わせる）。
+- ルールは絞り込みの代わりにならないので、コネクタの一覧の問い合わせは `table in [...]` を必ず付ける（段階3で、エミュレーターで通る事を確かめた。上の箇条）。
 - 版・作れなかった印の枠（`date`・`slot`）は、Claude が渡すのではなく回から決まる（7.8 の「コネクタの足す順」）。コネクタは、その回の枠にしか版・作れなかった印を足さない。ルールでは日付を比べない（30日より前の版を足しても、すぐ消える）。
 - 訂正は、30日の内で、版の記録がある版の `order` にある話題にだけ足す（コネクタが確かめる。ルールでは話題があるかを見ない。7.8 の「訂正を足す・出す」）。
 

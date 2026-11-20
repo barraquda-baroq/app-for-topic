@@ -18,7 +18,7 @@ import { FirestoreError, FirestoreRest } from './firestore'
 import { Identity } from './identity'
 import { Mirror, type SyncOutcome } from './mirror'
 import { Mutex } from './mutex'
-import { firestoreQuotaMessage, freshQuota, nextPacificMidnight, resetLabel, type QuotaCounts } from './quota'
+import { firestoreQuotaMessage, freshQuota, nextPacificMidnight, resetLabel, WRITE_RESERVE, type QuotaCounts } from './quota'
 import { claimConsent, takeRate, type RateKind, type RateResult } from './ratelimit'
 import {
   expireRuns,
@@ -108,8 +108,8 @@ export const FRESH_MS = 15_000
 export const RECHECK_MS = 60_000
 /** 許可の接続が一覧に無い時、断る前に読み直す（この時間より前に読んだ一覧では断らない。古い写しで許可を取り消さない） */
 export const CONNECTION_FRESH_MS = 5_000
-/** 書き込みの日枠のうち、作れなかった印と訂正のために残しておく数（話題・版・辞書の束は、残りがこれより少なくなる書き込みを断る。設計の 1.6） */
-export const WRITE_RESERVE = 30
+/** 書き込みの日枠の残し（quota.ts に置いた。道具のファイルは core.ts を値で読み込まないので、そちらを読む） */
+export { WRITE_RESERVE }
 
 /** config/connector から読んだ、すべての接続に効く「書き込みを許可」と接続の一覧 */
 export interface ConnectorState {

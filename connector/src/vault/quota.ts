@@ -50,6 +50,12 @@ export function resetLabel(ts: number): string {
   return `${sameDay ? '' : '明日の'}日本時間${jst.getUTCHours()}時${minutes ? `${minutes}分` : ''}`
 }
 
+/**
+ * 書き込みの日枠のうち、作れなかった印と訂正のために残しておく数（話題・版・辞書の束は、残りがこれより少なくなる書き込みを断る。設計の 1.6）。
+ * 道具のファイル（vault/tools/write.ts）は core.ts を値で読み込むと道具の振り分けと読み込みが輪になるので、ここに置いて両方から読む
+ */
+export const WRITE_RESERVE = 30
+
 export interface QuotaCounts {
   day: string
   reads: number

@@ -204,11 +204,16 @@ export interface DraftRow {
   input: string
   status: DraftStatus
   rejectReason: string | null
+  /** 初めに置いた時刻（putDraft の upsert は、置き換えでも created を替えない） */
   created: number
+  /**
+   * 今の中身を置いた・置き換えた時刻。照合済み・外した・足した時にも進み、読む・断られた照合では進まない（vault/drafts.ts の
+   * 「確かめが早すぎる」（2分）は updated から数える。upsert で created も替える形にするなら、drafts.ts の数えもそろえる）
+   */
   updated: number
   /** topic_get_draft で初めて読んだ時刻（読む前の照合は断る） */
   readAt: number | null
-  /** 照合済みになった時刻（置いてから2分未満は「確かめが早すぎる」） */
+  /** 照合済みになった時刻（今の中身を置いて（updated）から2分未満は「確かめが早すぎる」） */
   verifiedAt: number | null
   /** 照合を当てた回数（1つの下書きに5回まで） */
   checks: number

@@ -4,7 +4,7 @@
 import { SELF, abortAllDurableObjects, env, reset, runInDurableObject } from 'cloudflare:test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { newConnectionId } from '../../../src/claude/pairing'
-import { CONSENT_CAN, CONSENT_CANNOT } from '../../src/auth/consentPage'
+import { CONSENT_CAN, CONSENT_CANNOT, CONSENT_SOURCES } from '../../src/auth/consentPage'
 import { RATE_LIMITS } from '../../src/vault/ratelimit'
 import { TOOL_DEFS } from '../../src/mcp/tools'
 import { CONNECTOR_MODEL } from '../../src/version'
@@ -310,6 +310,8 @@ describe('GET /authorize（受け付けるクライアント）', () => {
     expect(html).toContain('Topic Studio で確認する')
     expect(html).toContain(`Claude ができること: ${CONSENT_CAN.join('・')}`)
     expect(html).toContain(`Claude ができないこと: ${CONSENT_CANNOT.join('・')}`)
+    // 資料の出どころの1行（docs/CONNECTOR.md の 1-A の許可の手順と同じ文）
+    expect(html).toContain(CONSENT_SOURCES)
     expect(html).toContain('消す・直す')
     expect(html).not.toMatch(/Novel|原稿|推敲/)
     expect(res.headers.get('X-Frame-Options')).toBe('DENY')

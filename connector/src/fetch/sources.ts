@@ -219,7 +219,7 @@ export const DEFAULT_SOURCES: readonly SourceConfig[] = [
     // RSS の利用条件の断り（官邸と同じ）。RSS の配信とそのページは /rss/ の下
     denyPaths: ['/rss/'],
     body: { kind: 'html', scopes: GOV_SCOPES, dropLines: NAV_LINES, dropBlocks: PRESS_QUESTION_MARKS },
-    hints: { region: 'jp', genres: ['economy', 'politics'] },
+    hints: { region: 'jp', genres: ['politics', 'economy', 'ai'] },
     notes: ['会見の記録の記者の質問は落としてある。質問の中身は書かない', '統計は発表の値のまま書く'],
     terms: { status: 'ok', accepted: ACCEPTED, rssRefused: true },
     termsPages: [
@@ -288,7 +288,7 @@ export const DEFAULT_SOURCES: readonly SourceConfig[] = [
       dropBlocks: PRESS_QUESTION_MARKS,
       qaPages: { paths: ['/stf/kaiken/'], verified: false },
     },
-    hints: { region: 'jp', genres: ['politics', 'economy'] },
+    hints: { region: 'jp', genres: ['politics', 'economy', 'incident'] },
     notes: ['会見の記録の記者の質問は落としてある。質問の中身は書かない', 'シンボルマーク・写真は使わない'],
     terms: { status: 'ok', accepted: ACCEPTED, rssRefused: true },
     termsPages: [
@@ -372,7 +372,7 @@ export const DEFAULT_SOURCES: readonly SourceConfig[] = [
     // 別のルールの道（自動車総合安全情報・PLATEAU・住まいのリテラシー）
     denyPaths: ['/jidosha/anzen/', '/plateau/', '/sumai_literacy_pf/'],
     body: { kind: 'html', scopes: GOV_SCOPES, dropLines: NAV_LINES, dropBlocks: PRESS_QUESTION_MARKS },
-    hints: { region: 'jp', genres: ['economy', 'politics', 'incident'] },
+    hints: { region: 'jp', genres: ['economy', 'incident'] },
     notes: ['会見の記録の記者の質問は落としてある。質問の中身は書かない', '共催・後援のように書かない'],
     terms: { status: 'ok', accepted: ACCEPTED },
     termsPages: [
@@ -405,7 +405,7 @@ export const DEFAULT_SOURCES: readonly SourceConfig[] = [
         '©',
       ],
     },
-    hints: { region: 'world', genres: ['politics', 'tech'] },
+    hints: { region: 'world', genres: ['tech'] },
     notes: ['英語。訳して書く。著者の名前はコネクタが出典に書く', '誰の言葉かを取り違えない。書き手の立場も主体として書く'],
     terms: { status: 'ok', accepted: ACCEPTED },
     termsPages: [

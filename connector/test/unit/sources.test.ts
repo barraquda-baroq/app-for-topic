@@ -192,6 +192,18 @@ describe('出どころの data（本物）', () => {
     for (const s of DEFAULT_SOURCES) expect(termsFingerprinted(s), s.id).toBe(false)
   })
 
+  it('ジャンルの手がかり（hints.genres）は、設計の 4.13 のジャンルの割り振りの表の「多い出どころ」と同じ（Q15 の答えで替わる）', () => {
+    const byGenre = (g: string) =>
+      DEFAULT_SOURCES.filter((s) => (s.hints.genres as readonly string[]).includes(g)).map((s) => s.id)
+    expect(byGenre('politics')).toEqual(['kantei', 'cao', 'mhlw'])
+    expect(byGenre('economy')).toEqual(['cao', 'mhlw', 'mlit'])
+    expect(byGenre('tech')).toEqual(['digital', 'gv'])
+    expect(byGenre('ai')).toEqual(['cao', 'digital'])
+    expect(byGenre('incident')).toEqual(['mhlw', 'fdma', 'jma', 'mlit'])
+    expect(byGenre('sports')).toEqual([])
+    expect(byGenre('entertainment')).toEqual([])
+  })
+
   it('今は取らない所（外務省・防衛省・経済産業省）は、取り方を持たず、番号を見る規約のページ1つだけ', () => {
     expect(PENDING_HOSTS.map((p) => p.host)).toEqual(['www.mofa.go.jp', 'www.mod.go.jp', 'www.meti.go.jp'])
     expect(PENDING_HOSTS.find((p) => p.id === 'meti')!.statusUrl).toBe('https://www.meti.go.jp/main/rules.html')

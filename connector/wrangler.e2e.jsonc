@@ -1,0 +1,31 @@
+// E2E のテストの入口の Worker（B8。段階3の設計の 7. の「E2E」）。連携の通しの E2E（e2e/pairing.sync.spec.ts）が、wrangler の
+// createTestHarness でこの設定の Worker をテストの中に立ち上げる（手元の workerd だけ。Cloudflare には送らない・公開しない）。
+// 本番の wrangler.jsonc と同じ形で、違うのは名前と入口（main）だけ: 入口の test/e2e/worker.ts は本番の src/index.ts をそのまま使い、
+// Durable Object の Vault だけを作り物の社・作り物の出どころで動く物に替える（本番の入口と wrangler.jsonc には切り替えを持たせない）。
+// 同じ形であることは test/unit/e2eEntry.test.ts が確かめる。vars はテストが Firebase エミュレーター・アプリの開発サーバー・DCR の値で上書きする
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "topic-studio-connector-e2e",
+  "main": "test/e2e/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "kv_namespaces": [{ "binding": "OAUTH_KV" }],
+  "durable_objects": { "bindings": [{ "name": "VAULT", "class_name": "Vault" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }],
+  "triggers": { "crons": ["23 19 * * *"] },
+  "vars": {
+    "MCP_RESOURCE": "",
+    "PUBLIC_ORIGIN": "",
+    "APP_ORIGIN": "http://localhost:5180",
+    "FIREBASE_PROJECT_ID": "demo-topic-studio",
+    "FIREBASE_API_KEY": "fake-api-key",
+    "ENABLE_DCR": "false",
+    "ALLOW_CLAUDE_CODE": "false",
+    "WORK_BUDGET_CHARS": "300000",
+    "DAILY_READ_BUDGET": "15000",
+    "DAILY_WRITE_BUDGET": "5000",
+  },
+}

@@ -361,6 +361,8 @@ export const topicBeginRun: ToolHandler = async (core, args, ctx) => {
   }
   store.transaction(() => {
     store.putRun(run)
+    // 回の道具の呼び出しの数（版の usage.toolCalls と topic_add_edition の答え。設計の 4.9）。回を始めた呼び出しも1回に数える
+    store.addRunCount(runId, 'calls')
     store.setMeta('runDaily', {
       ...daily,
       total: daily.total + 1,
@@ -386,7 +388,7 @@ export const topicBeginRun: ToolHandler = async (core, args, ctx) => {
     )
   if (deadlines)
     lines.push(
-      `書く係の締め切り: ${clockText(deadlines.writerMs)}・照合の打ち切り: ${clockText(deadlines.checkerMs)}（どの答えの頭にも残りの分が出ます）`,
+      `書く係の締め切り: ${clockText(deadlines.writerMs)}・照合の打ち切り: ${clockText(deadlines.checkerMs)}（runId を渡した答えの頭に残りの分が出ます）`,
     )
   lines.push(`この回でできる事: ${CAN_DO[kind]}`)
   if (kind === 'edition')
@@ -403,10 +405,17 @@ export const topicBeginRun: ToolHandler = async (core, args, ctx) => {
   return { ...result, structured: { created: [{ id: runId, label: RUN_KIND_LABELS[kind] }], skipped: [] } }
 }
 
-/** 回を使う呼び出し（ctx.useRun の中身）: 確かめ・最後の呼び出しの時刻・答えの頭の締め切り */
+/** 回の道具の呼び出しを数え終えた呼び出し（1つの呼び出しの中で useRun を何度呼んでも1回に数える） */
+const countedCalls = new WeakSet<ToolCallContext>()
+
+/** 回を使う呼び出し（ctx.useRun の中身）: 確かめ・最後の呼び出しの時刻・答えの頭の締め切り・回の道具の呼び出しの数（run_counts の calls） */
 export function useRun(store: MirrorStore, ctx: ToolCallContext, runId: unknown): RunRow {
   const run = checkRun(store, runId, ctx.tool, ctx.now)
   store.touchRun(run.runId, ctx.now)
+  if (!countedCalls.has(ctx)) {
+    countedCalls.add(ctx)
+    store.addRunCount(run.runId, 'calls')
+  }
   ctx.deadlines = runDeadlines(run)
   return { ...run, lastCall: ctx.now }
 }
