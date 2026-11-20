@@ -1204,13 +1204,15 @@ export class VaultCore {
   /**
    * 夜の仕事（cron。毎日 4:23 日本時間）: 30日を過ぎた写しの行を消す・期限の片付け・消えないはずの表の数を比べる（違えば読み直し）・
    * 毎日の決まりの読み（robots.txt と AI の意思表示。日曜は規約のページの見張りも）を alarm で始める・気象庁の見張りを置く・外す。
-   * 連携していない時は、期限の片付けだけをして 'skipped'
+   * 連携していない時は、期限の片付けと、写しの30日の消し方だけをして 'skipped'
    */
   async nightly(): Promise<'ok' | 'skipped'> {
     const now = this.#now()
     if (this.pairingState() !== 'paired') {
-      // 連携していない間も、期限を過ぎた回の物は消す（D21 の守り 7。クラウド・出どころへは出ない）
+      // 連携していない間も、期限を過ぎた回の物と、30日を過ぎた写しの行は消す（D21 の守り 7・設計 1.9。日付だけで決まり、クラウド・
+      // 出どころへは出ない）
       try {
+        this.mirror.expire(now, true)
         const next = expireRuns(this.store, now)
         if (next === null) this.store.deleteTask('expire')
         else this.store.putTask('expire', next, {}, true)

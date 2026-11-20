@@ -135,6 +135,88 @@ describe('規約のページの見張り', () => {
   })
 })
 
+describe('規約のページの見張りの止め（横断の点検）', () => {
+  const TERMS = 'https://example.com/fake-ministry/terms.html'
+  const changedSetup = () =>
+    setup(jst(4, 23, 22), { sources: noJma }, (n) => n.html(TERMS, fakeTermsPage('作り物の新しい決まりの文です。')))
+  const status = async (s: Awaited<ReturnType<typeof setup>>) =>
+    (await s.core.callTool('topic_status', {}, { grant: s.grant })).text
+
+  it('「変わった」の次の日曜にページが 503・同じでも、data の指紋が新しくなるまで止めたまま', async () => {
+    const s = await changedSetup()
+    await rules(s)
+    expect(await status(s)).toContain('〇〇省: 取らない（規約のページが変わりました）')
+    s.news.set(TERMS, { status: 503 })
+    s.clock.now = jst(4, 23, 29)
+    await rules(s)
+    expect(s.core.store.termsWatch(TERMS)!.state).toBe('changed')
+    expect(await status(s)).toContain('〇〇省: 取らない（規約のページが変わりました）')
+    // 元の文に戻っても、開発が読み直すまで止めたまま
+    s.news.html(TERMS, fakeTermsPage())
+    s.clock.now = jst(4, 23, 6 + 30)
+    await rules(s)
+    expect(s.core.store.termsWatch(TERMS)!.state).toBe('changed')
+  })
+
+  it('開発が data の指紋を新しくして公開し直すと、次の日曜を待たずに外れる', async () => {
+    const s = await changedSetup()
+    await rules(s)
+    // 公開し直した形（data の指紋を新しくした出どころ）
+    const work = s.core.fetchWork as unknown as { env: FetchEnv; sources: readonly SourceConfig[] }
+    const moved: SourceConfig[] = noJma.map((src) =>
+      src.id === 'fake-html'
+        ? { ...src, termsPages: src.termsPages.map((p) => ({ ...p, fingerprint: 'fakenewfp000000a' })) }
+        : src,
+    )
+    work.env = { ...work.env, sources: moved }
+    work.sources = moved
+    expect(await status(s)).not.toContain('〇〇省: 取らない（規約のページが変わりました）')
+  })
+
+  it('初めから・続けて読めない（404）規約のページは、2週続いたら「変わった」と同じに止める', async () => {
+    const s = await setup(jst(4, 23, 22), { sources: noJma }, (n) => n.set(TERMS, { status: 404 }))
+    await rules(s)
+    expect(s.core.store.termsWatch(TERMS)!.state).toBe('unreadable')
+    expect(await status(s)).not.toContain('〇〇省: 取らない（規約のページが変わりました）')
+    s.clock.now = jst(4, 23, 29)
+    await rules(s)
+    expect(s.core.store.termsWatch(TERMS)!.state).toBe('changed')
+    expect(await status(s)).toContain('〇〇省: 取らない（規約のページが変わりました）')
+  })
+})
+
+describe('Crawl-delay の効き（横断の点検）', () => {
+  it('初めて読んだ robots.txt の Crawl-delay: 5 は、tdmrep.json と最初の本文にも効く', async () => {
+    const s = await setup(jst(10, 16), { sources: noJma }, (n) => n.robots('example.com', 'User-agent: *\nCrawl-delay: 5'))
+    s.core.store.sql.run('DELETE FROM host_rules')
+    s.core.store.sql.run('DELETE FROM host_pace')
+    s.news.calls.length = 0
+    const r = await s.core.callTool('topic_begin_run', { kind: 'correction', model: 'fake-writer-model' }, { grant: s.grant })
+    const runId = /runId: (r\d{12}-[0-9a-z]{4})/.exec(r.text)![1]
+    await s.core.callTool(
+      'topic_read_article',
+      { runId, ref: 'https://example.com/fake-ministry/press/1001.html' },
+      { grant: s.grant },
+    )
+    const at = s.news.calls.map((c) => c.at)
+    expect(s.news.urls()).toEqual([
+      'https://example.com/robots.txt',
+      'https://example.com/.well-known/tdmrep.json',
+      'https://example.com/fake-ministry/press/1001.html',
+    ])
+    for (let i = 1; i < at.length; i++) expect(at[i] - at[i - 1]).toBeGreaterThanOrEqual(5_000)
+  })
+
+  it('data の crawlDelaySec が長いホスト（10秒）でも、毎日の決まりの読みが終わる（tdmrep.json を待ちきれずに読み直し続けない）', async () => {
+    const slow: SourceConfig[] = noJma.map((src) => ({ ...src, crawlDelaySec: 10 }))
+    const s = await setup(jst(4, 23), { sources: slow })
+    s.clock.now = jst(4, 23, 20)
+    await rules(s)
+    expect(s.core.store.hostRule('example.com')!.day).toBe('2026-11-20')
+    expect(s.news.urls().filter((u) => u.endsWith('robots.txt'))).toHaveLength(1)
+  })
+})
+
 describe('気象庁の見張り', () => {
   it("data が 'ok' で指紋のある時だけ置く。本番の data（'trial-only'）では置かない", () => {
     expect(jmaWatchEnabled(DEFAULT_FETCH_ENV)).toBe(false)

@@ -167,6 +167,22 @@ describe('取りを止める（(c)・(d)）', () => {
     expect(decidePath(d, '/fake/1', '2026-11-20').verdict).toBe('ok')
   })
 
+  it('terms.accepted を遠い先の日にしても、robots.txt・tdmrep.json から出た止めは外れない（外れるのは本文の止めだけ。CONNECTOR.md の 9-C）', () => {
+    const far = '2099-12-31'
+    expect(decidePath(data('User-agent: GPTBot\nDisallow: /'), '/x', far)).toEqual({ verdict: 'stopped', reasons: ['ai:gptbot'] })
+    expect(decidePath(data('Content-Signal: ai-train=no\nUser-agent: *'), '/x', far).verdict).toBe('stopped')
+    expect(decidePath(data('# no ai please\nUser-agent: *'), '/x', far).reasons).toContain('robots-comment')
+    const base = data('User-agent: *\nAllow: /')
+    expect(decidePath(data('User-agent: FakeNewBot\nDisallow: /', base), '/x', far).reasons).toContain('new-agent:fakenewbot')
+    expect(decidePath(data('User-agent: *', null, '[{"location":"/","tdm-reservation":1}]'), '/x', far).reasons).toContain(
+      'tdm-reservation',
+    )
+    // 本文の止めは、止めた日より後の日で外れる（同じ日では外れない）
+    const stopped = { ...data('User-agent: *'), stop: { day: '2026-11-20', reasons: ['x-robots-noai'] } }
+    expect(decidePath(stopped, '/x', '2026-11-20').verdict).toBe('stopped')
+    expect(decidePath(stopped, '/x', '2026-11-21').verdict).toBe('ok')
+  })
+
   it('断る（robots.txt）と止める（AI）が両方ある時は、断る', () => {
     expect(verdict('User-agent: ClaudeBot\nDisallow: /\n\nUser-agent: GPTBot\nDisallow: /')).toBe('refused')
   })
@@ -215,6 +231,76 @@ describe('読み落としで取らない（組の名前の書き方・ASCII で�
   it('# の注の AI の語は大文字・小文字を問わない', () => {
     expect(verdict('# no ai crawlers on this fake site\nUser-agent: *')).toBe('stopped')
     expect(verdict('# llm training is not welcome\nUser-agent: *')).toBe('stopped')
+  })
+})
+
+describe('組の区切り・UA の全文・書き違い・%xx（横断の点検）', () => {
+  it('User-agent の並びの間の Crawl-delay・Sitemap・Host・Content-Signal は組を区切らない（RFC 9309 の 2.2.4）', () => {
+    const between = [
+      'Crawl-delay: 5',
+      'Sitemap: https://example.com/fake-sitemap.xml',
+      'Host: example.com',
+      'Content-Signal: search=yes',
+      'Fake-Unknown-Line: 1',
+    ]
+    for (const line of between) {
+      const t = `User-agent: ClaudeBot\nUser-agent: Claude-User\n${line}\nUser-agent: Bingbot\nDisallow: /`
+      const v = decidePath(data(t), '/x')
+      expect(v.verdict, line).toBe('refused')
+      expect(v.reasons, line).toContain('anthropic:claudebot')
+    }
+    // anthropic-ai と、base の中の知らない名前の組も同じ
+    expect(verdict('User-agent: anthropic-ai\nCrawl-delay: 5\nUser-agent: Googlebot\nDisallow: /', '/x')).toBe('refused')
+    expect(verdict('User-agent: ClaudeBot\nHost: example.com\nUser-agent: SomeCrawler\nDisallow: /', '/x')).toBe('refused')
+    // 間の Crawl-delay は同じ組の物（2つあれば長い方）
+    expect(parseRobots('User-agent: A\nCrawl-delay: 3\nUser-agent: B\nCrawl-delay: 7\nDisallow: /x').groups).toEqual([
+      { agents: ['a', 'b'], rules: [{ allow: false, pattern: '/x' }], crawlDelay: 7 },
+    ])
+  })
+
+  it('規則の後の User-agent は、これまでどおり次の組（規則の後の Crawl-delay もその組の物）', () => {
+    const t = 'User-agent: ClaudeBot\nDisallow: /a\nCrawl-delay: 2\nUser-agent: Googlebot\nDisallow: /'
+    expect(parseRobots(t).groups).toEqual([
+      { agents: ['claudebot'], rules: [{ allow: false, pattern: '/a' }], crawlDelay: 2 },
+      { agents: ['googlebot'], rules: [{ allow: false, pattern: '/' }] },
+    ])
+    expect(verdict(t, '/x')).toBe('ok')
+    expect(verdict(t, '/a/1')).toBe('refused')
+  })
+
+  it('UA の全文の形の組は、中の Claude・ほかの AI の名前の組にも読む', () => {
+    const claude = decidePath(data('User-agent: FakeBrowser/5.0 (compatible; ClaudeBot/1.0)\nDisallow: /'), '/x')
+    expect(claude.verdict).toBe('refused')
+    expect(claude.reasons).toContain('anthropic:claudebot')
+    const gpt = decidePath(data('User-agent: FakeBrowser/5.0 (compatible; GPTBot/1.0)\nDisallow: /'), '/x')
+    expect(gpt.verdict).toBe('stopped')
+    expect(gpt.reasons).toContain('ai:gptbot')
+    // 中に AI の名前が無い全文の形は、今までどおり名前の組（その名前だけ）
+    expect(verdict('User-agent: FakeBrowser/5.0 (compatible; FakeSearch/1.0)\nDisallow: /', '/x')).toBe('ok')
+  })
+
+  it('コロンの無い行・鍵の書き違い（User agent・Useragent・Disalow など）も断る側に読む。Allow の書き違いは読まない', () => {
+    for (const t of [
+      'User agent: ClaudeBot\nDisallow: /',
+      'User-agent: ClaudeBot\nDisallow /',
+      'User-agent: ClaudeBot\nDisalow: /',
+      'Useragent: ClaudeBot\nDisallow: /',
+      'User-agent ClaudeBot\nDissallow: /',
+    ])
+      expect(verdict(t, '/x'), t).toBe('refused')
+    // Allow の書き違いは許す規則に読まない
+    expect(verdict('User-agent: ClaudeBot\nDisallow: /\nAlow: /x', '/x')).toBe('refused')
+    // 空白で3つ以上に分かれる行は読まない（鍵と値が分からない）
+    expect(parseRobots('User-agent: A\nDisallow / x').groups).toEqual([{ agents: ['a'], rules: [] }])
+  })
+
+  it('予約でない字の %xx（%6E・%7E）は字に戻してから比べる（規則と道の両方。%2F は戻さない）', () => {
+    expect(verdict('User-agent: ClaudeBot\nDisallow: /news/', '/%6Eews/a.html')).toBe('refused')
+    expect(verdict('User-agent: ClaudeBot\nDisallow: /~user/', '/%7Euser/a')).toBe('refused')
+    expect(verdict('User-agent: ClaudeBot\nDisallow: /%7Euser/', '/~user/a')).toBe('refused')
+    expect(verdict('User-agent: ClaudeBot\nDisallow: /%6eews/', '/news/a')).toBe('refused')
+    // 予約の字（/ の %2F）は戻さない
+    expect(verdict('User-agent: ClaudeBot\nDisallow: /a/b', '/a%2Fb')).toBe('ok')
   })
 })
 

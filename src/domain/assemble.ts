@@ -103,13 +103,15 @@ function cut(s: string, max: number): string {
   return chars.length <= max ? s : chars.slice(0, max).join('').trim()
 }
 
-const sameEntry = (a: TermEntry, b: TermEntry): boolean =>
+const sameEntry = (a: TermEntry, b: TermEntry): boolean => a.rev === b.rev && sameContent(a, b)
+
+/** 語の中身が同じか（rev を除く） */
+const sameContent = (a: TermEntry, b: TermEntry): boolean =>
   a.termId === b.termId &&
   a.key === b.key &&
   a.term === b.term &&
   a.explanation === b.explanation &&
   a.asOf === b.asOf &&
-  a.rev === b.rev &&
   a.aliases.length === b.aliases.length &&
   a.aliases.every((x, i) => x === b.aliases[i])
 
@@ -207,8 +209,14 @@ export function assembleTopic(input: TopicDraftInput, ctx: AssembleContext): Ass
       const checked = checkTermEntry(candidate, `${path}.revise`)
       for (const e of checked.errors) err(inputPathOf(e.path, []), `term:${e.code}`, e.message)
       if (checked.errors.length) return
+      // 同じ回のほかの下書きが新しくした語（束に書いて辞書に入った後も、同じ回の語として残る）は、rev に関わらず中身が違えば断る
+      // （先に置いた方が勝つ。束の後に別の説明で置いた下書きの説明が、照合の時に黙って元の説明へ戻らないように）
+      const fromRun = (ctx.runEntries ?? []).find((e) => e.termId === base.termId)
       const pending = effective.get(base.termId)
-      if (pending && pending.rev >= candidate.rev && !sameEntry(pending, candidate))
+      const conflict = fromRun
+        ? !sameContent(fromRun, candidate)
+        : pending !== undefined && pending.rev >= candidate.rev && !sameEntry(pending, candidate)
+      if (conflict)
         err(
           path,
           'term-conflict',

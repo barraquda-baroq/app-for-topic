@@ -72,7 +72,10 @@ model の欄には、あなたのモデルの名前を入れます。
   `READ_LIMITS` と、話題を足す数（5本ずつ）と1回の訂正の数（3件）はコネクタの上限と同じです。〔Q17〕で数が替わったら、依頼文の数も替えます
   （`scripts/schedule-text.test.mjs` が食い違いを止めます）。
 - 選ぶ係を出す前に `topic_status` で読める候補の数を見るのは、候補が少ない版（12:00版・土日）で、選ぶ係の使用量をかけずに終わるためです。
-- 試しの回（S2b）は、この本文の `kind: "edition"` だけを `kind: "trial"` に替えて流します（クラウドに何も書きません）。
+- 試しの回（S2b）は、この本文の `kind: "edition"` だけを `kind: "trial"` に替えて流します（クラウドに何も書きません）。試しの回では、
+  手順の「作れない時」の `topic_add_edition_fail` と「足す」の `topic_add_correction` を呼びません（コネクタが「この回（試しの回）では使えません」で断ります）。
+  S2b の回に貼る時は、次の1文を依頼文の末尾に足して貼ります:「試しの回なので、作れない時は topic_add_edition_fail を呼ばず、足すはずだった
+  reasonKind と訳を報告の1行目に書いて終わります。訂正は足さず、足すはずだった数を報告の『足した訂正』の行に書きます。」
 
 ## 2. 定期実行の作り方
 
@@ -95,9 +98,11 @@ model の欄には、あなたのモデルの名前を入れます。
 
 1. 作者が claude.ai で始めた、Topic Studio のコネクタが来ている新しい開発のセッションから作る（コネクタはセッションを始める時に読まれ、作る道具は
    そのセッションが持つコネクタしか付けられないため。[CONNECTOR.md](CONNECTOR.md) の 1-A の手順 10）。
-2. `create_trigger` で、上の表の値（`create_new_session_on_fire: true`・`connectors: ["Topic Studio"]`・環境 `topic-studio`・`notifications: {}`・
-   `initiation: human_request`）で作り、作った直後に `update_trigger` の `enabled: false` で止めておく（作る道具には止めた形で作る欄が無い）。答えに「コネクタを保存していない」と出たら、そのまま作者に伝えて止める。
-3. 作者の言葉（「モデルは〇〇にして」）で `update_trigger` の `model` を入れ、`get_trigger` で入った事を確かめてから動かす（`enabled: true`）。
+2. `create_trigger` で、上の表の値のうち時刻（`cron_expression`）だけを入れずに作る（`create_new_session_on_fire: true`・
+   `connectors: ["Topic Studio"]`・環境 `topic-studio`・`notifications: {}`・`initiation: human_request`。`cron_expression` も `run_once_at` も
+   無いので、自分では動かない＝モデルが入るまで止めた形で作れる）。答えに「コネクタを保存していない」と出たら、そのまま作者に伝えて止める。
+3. 作者の言葉（「モデルは〇〇にして」）で `update_trigger` の `model` を入れ、`get_trigger` でモデルが入った事と次に動く時刻（`next_run_at`）が
+   無い事を確かめてから、`update_trigger` で `cron_expression`（`CRON_TZ=Asia/Tokyo 16 10,18 * * *`）を入れて動かす。
 4. 最初の回（〔Q11〕の今の決め方では、試しが済んだ次の平日の 20:00版）は、開発が回の記録を見守る（`get_session` と、`list_events` の
    `result`・`system` だけを読む。資料の文・道具の答えは開発の会話に入れない）。
 
@@ -107,7 +112,8 @@ claude.ai の Claude Code の画面で、定期実行を新しく作ります（
 
 1. 依頼文に、1. の枠の中の本文を貼る（枠の ``` の行は入れない）。
 2. 時刻を「毎日 10:16」と「毎日 18:16」（日本時間）にする（1つの定期実行に2つの時刻を入れられない時は、同じ依頼文で2つ作る）。
-3. 環境は `topic-studio`、コネクタは Topic Studio だけ、モデルは決めた物、知らせはオフにする。
+3. 環境は `topic-studio`、コネクタは Topic Studio だけ、モデルは決めた物、知らせはオフにする。モデルを決めてから保存する（モデルが入る前に
+   保存すると、その間に時刻が来た回が、決めていないモデルで動きうる）。
 4. 保存した後、開発に「作った」と伝える（開発が最初の回を見守ります）。
 
 ### 2-C. 依頼文を直した時

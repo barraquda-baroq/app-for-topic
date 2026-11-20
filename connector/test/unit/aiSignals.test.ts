@@ -1,6 +1,14 @@
 // AI への意思表示の読み（段階3の設計の 1.7 の (2) の 2 の (c)）: Content-Signal・Content-Usage・tdmrep.json・X-Robots-Tag・meta robots
 import { describe, expect, it } from 'vitest'
-import { metaNoAi, parseTdmRep, signalRefusals, tdmReserved, xRobotsNoAi } from '../../src/fetch/aiSignals'
+import {
+  headerAiStop,
+  metaNoAi,
+  parseTdmRep,
+  signalRefusals,
+  tdmMetaReserved,
+  tdmReserved,
+  xRobotsNoAi,
+} from '../../src/fetch/aiSignals'
 
 describe('AI への意思表示', () => {
   it('Content-Signal・Content-Usage の断る値（search だけは数えない。知らない鍵・鍵の無い断る値も数える）', () => {
@@ -52,5 +60,27 @@ describe('AI への意思表示', () => {
     expect(metaNoAi('GPTBot', 'noai')).toBe(true)
     expect(metaNoAi('ClaudeBot', 'noindex')).toBe(true)
     expect(metaNoAi('description', 'noai')).toBe(false)
+  })
+
+  it('X-Robots-Tag の Claude の名前の noindex・none も止める（meta と同じ）。ほかの名前の noindex・unavailable_after は止めない', () => {
+    expect(xRobotsNoAi('ClaudeBot: noindex, nofollow')).toBe(true)
+    expect(xRobotsNoAi('anthropic-ai: none')).toBe(true)
+    expect(xRobotsNoAi('googlebot: nofollow, Claude-User: noindex')).toBe(true)
+    expect(xRobotsNoAi('googlebot: noindex')).toBe(false)
+    expect(xRobotsNoAi('noindex')).toBe(false)
+    expect(xRobotsNoAi('googlebot: noindex, ClaudeBot: nofollow')).toBe(false)
+    expect(xRobotsNoAi('unavailable_after: 25 Jun 2030 15:00:00 PST')).toBe(false)
+    // meta と食い違わない
+    expect(metaNoAi('ClaudeBot', 'noindex, nofollow')).toBe(xRobotsNoAi('ClaudeBot: noindex, nofollow'))
+  })
+
+  it('TDMRep の応答の見出しと meta の留保（tdm-reservation: 1）', () => {
+    expect(headerAiStop(new Headers({ 'tdm-reservation': '1' }))).toBe('tdm-reservation')
+    expect(headerAiStop(new Headers({ 'tdm-reservation': '0' }))).toBeNull()
+    expect(headerAiStop(new Headers({ 'x-robots-tag': 'noai' }))).toBe('x-robots-noai')
+    expect(headerAiStop(new Headers({}))).toBeNull()
+    expect(tdmMetaReserved('TDM-Reservation', ' 1 ')).toBe(true)
+    expect(tdmMetaReserved('tdm-reservation', '0')).toBe(false)
+    expect(tdmMetaReserved('robots', '1')).toBe(false)
   })
 })

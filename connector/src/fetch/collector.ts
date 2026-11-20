@@ -21,7 +21,20 @@ import type { CandidateRow, CollectState, MaterialRow, RunRow } from '../vault/s
 import { recentTopics } from '../vault/tools/read'
 import { stripMarks } from '../vault/tools/common'
 import { agentCounts, decidePath, hostRulesData, hostStateOf, crawlDelayOf } from './robots'
-import { envOf, feedBody, fetchBody, isShort, materialOf, responseText, sourceGet, timeOf, type FetchEnv } from './article'
+import {
+  envOf,
+  FEED_HEAD_CHARS,
+  feedBody,
+  fetchBody,
+  isShort,
+  materialOf,
+  metaAiStop,
+  responseText,
+  sourceGet,
+  timeOf,
+  type FetchEnv,
+} from './article'
+import { headerAiStop } from './aiSignals'
 import { normalizeEvents } from './htmlTokens'
 import { readHtmlList } from './htmlList'
 import {
@@ -47,6 +60,7 @@ import {
   dayWindow,
   jmaUnseen,
   jmaWatchEnabled,
+  markBodyStop,
   noteJmaSeen,
   rulesDataOf,
   STEP_REQUESTS,
@@ -273,6 +287,11 @@ async function listJob(x: Ctx, src: SourceConfig, i: number, b: Budget): Promise
   })
   if (!got.ok) {
     if (got.why === 'busy') return 'busy'
+    // 待っている間に、ほかの呼び出しが受けた 403・確認画面・AI への意思表示で今日の決まりが変わった（取りに行っていない）
+    if (got.why === 'robots' || got.why === 'ai') {
+      x.count(src.id, `gate:${got.why}`)
+      return 'done'
+    }
     b.requests += 1
     x.count(src.id, got.why === 'budget' || got.why === 'host-budget' ? 'budget' : 'list-fail')
     x.pcount(src.id, `${lk}.status`, got.status ?? 0)
@@ -282,6 +301,14 @@ async function listJob(x: Ctx, src: SourceConfig, i: number, b: Budget): Promise
   b.requests += 1
   b.chars += got.bytes.byteLength
   if (isHeavy(src, list)) b.heavy = true
+  // 一覧の応答の AI への意思表示（X-Robots-Tag の noai・TDMRep の見出し）。Global Voices は RSS の全文が本文なので、この応答が本文の応答。
+  // ほかの一覧でも、断る側に寄せて同じに止める
+  const headerStop = headerAiStop(got.headers)
+  if (headerStop) {
+    markBodyStop(store, host, core.now(), headerStop)
+    x.count(src.id, 'gate:ai')
+    return 'done'
+  }
   const { text, charset } = responseText(got)
   x.pcount(src.id, `${lk}.status`, got.status)
   x.ptext(src.id, `${lk}.type`, mimeOf(got.headers.get('content-type')) || 'none')
@@ -292,14 +319,22 @@ async function listJob(x: Ctx, src: SourceConfig, i: number, b: Budget): Promise
     return 'done'
   }
   // RSS の利用条件の断りのある出どころでは、HTML の一覧の道が RSS・Atom を返しても読まない
-  if (src.terms.rssRefused && isFeedResponse(got.headers.get('content-type'), text.slice(0, 600))) {
+  if (src.terms.rssRefused && isFeedResponse(got.headers.get('content-type'), text.slice(0, FEED_HEAD_CHARS))) {
     x.count(src.id, 'feed')
     return 'done'
   }
   const shape = ((x.c.shape ??= {})[src.id] ??= { zero: 0, undated: 0 })
   const entries: Entry[] = []
   if (list.kind === 'html') {
-    const r = readHtmlList(normalizeEvents(await env.html(text)), src, list, x.today)
+    const events = normalizeEvents(await env.html(text))
+    // HTML の一覧のページの meta の AI への意思表示も、断る側に寄せて止める
+    const metaStop = metaAiStop(events)
+    if (metaStop) {
+      markBodyStop(store, host, core.now(), metaStop)
+      x.count(src.id, 'gate:ai')
+      return 'done'
+    }
+    const r = readHtmlList(events, src, list, x.today)
     x.pcount(src.id, `${lk}.links`, r.links)
     x.pcount(src.id, `${lk}.matched`, r.matched)
     x.pcount(src.id, `${lk}.dated.row`, r.dated.row)
@@ -571,6 +606,11 @@ async function bodyJob(x: Ctx, src: SourceConfig, url: string, b: Budget): Promi
     x.pcount(src.id, `qa${j}.lines`, mk.lines)
     x.pcount(src.id, `qa${j}.dropped`, mk.dropped)
   })
+  // 記者の質問の段の続きとして落とした行と、話し手の印で段を終えた行（S1 で段の終わりの印を見直す手がかり）
+  if (r.read.cont) {
+    x.pcount(src.id, 'qa.cont.dropped', r.read.cont.dropped)
+    x.pcount(src.id, 'qa.cont.ended', r.read.cont.ended)
+  }
   if (isShort(m.bodyChars)) {
     x.count(src.id, 'short')
     markStaged(x, r.read.url, ['@x:short'])
@@ -790,12 +830,51 @@ const serverHead = (h: Headers | undefined) =>
     .replace(/[^A-Za-z0-9_.-]/g, '')
     .slice(0, 20)
 
+/** probe 'hosts' の前の結果（meta。ホストごと。消えない。403・確認画面なら二度と試さない） */
+export const HOSTS_PROBE_META = 'hostsProbe'
+
+interface HostsProbeSeen {
+  day: string
+  robots: number
+  challenge: boolean
+  page: number | null
+}
+
+const hostsProbeSeen = (x: Ctx): Record<string, HostsProbeSeen> =>
+  x.store.getMeta<Record<string, HostsProbeSeen>>(HOSTS_PROBE_META) ?? {}
+
+function noteHostsProbe(x: Ctx, id: string, patch: Partial<HostsProbeSeen>): void {
+  const all = hostsProbeSeen(x)
+  const prev = all[id] ?? { day: x.today, robots: 0, challenge: false, page: null }
+  all[id] = { ...prev, ...patch }
+  x.store.setMeta(HOSTS_PROBE_META, all)
+}
+
+/** 前の結果で、もう取りに行かないか（403・429・確認画面だった・同じ日に確かめた・今日そのホストを取らない） */
+function hostsProbeDone(x: Ctx, id: string, host: string): HostsProbeSeen | 'unreadable' | null {
+  const seen = hostsProbeSeen(x)[id]
+  if (seen && (seen.robots === 403 || seen.robots === 429 || seen.challenge || seen.day === x.today)) return seen
+  const rule = x.store.hostRule(host)
+  if (rule && rule.day === jstDateOf(x.core.now()) && rule.state === 'unreadable') return 'unreadable'
+  return null
+}
+
 async function hostsJob(x: Ctx, id: string, step: 1 | 2): Promise<'done' | 'busy'> {
   const p = x.env.pending.find((h) => h.id === id)
   if (!p) return 'done'
   const { store, core, env, run } = x
   const cur = store.probes(run.runId).find((r) => r.source === id)?.data ?? {}
   if (step === 1) {
+    // S1b は1回だけ（403・確認画面なら、ほかの回・日・時刻では二度と試さない。設計 1.7 の (2) の 5）
+    const done = hostsProbeDone(x, id, p.host)
+    if (done) {
+      const data: Record<string, number | string | boolean | null> =
+        done === 'unreadable'
+          ? { verdict: 'tried-before', unreadable: true }
+          : { verdict: 'tried-before', robots: done.robots, challenge: done.challenge, page: done.page, day: done.day }
+      store.putProbe({ runId: run.runId, source: id, data, text: null })
+      return 'done'
+    }
     const got = await sourceGet(core, env, {
       url: `https://${p.host}/robots.txt`,
       run: null,
@@ -856,6 +935,7 @@ async function hostsJob(x: Ctx, id: string, step: 1 | 2): Promise<'done' | 'busy
       })
     }
     store.putProbe({ runId: run.runId, source: id, data, text: null })
+    noteHostsProbe(x, id, { day: x.today, robots: status, challenge: data.challenge === true, page: null })
     // robots.txt が 403 の時だけ、規約のページ1つの番号を見る（本文は読まない）
     if (status === 403) x.c.jobs!.unshift({ k: 'hosts', id, step: 2 })
     return 'done'
@@ -874,6 +954,7 @@ async function hostsJob(x: Ctx, id: string, step: 1 | 2): Promise<'done' | 'busy
     data: { ...cur, page: got.status ?? 0, pageServer: serverHead(got.headers) || null },
     text: null,
   })
+  noteHostsProbe(x, id, { page: got.status ?? 0 })
   return 'done'
 }
 
@@ -913,15 +994,29 @@ async function termsJob(x: Ctx, key: string, url: string, step: 1 | 2): Promise<
       }
     }
   }
+  // 規約のページも、403・429・確認画面なら、その日はそのホストを取らない（同じホストのほかの規約のページも取らない。2回目も取らない）
   const got = await sourceGet(core, env, {
     url,
     run: null,
     maxWait: STEP_WAIT_MAX_MS,
     count: false,
-    markBlocked: false,
     accept: 'text/html',
   })
   if (!got.ok && got.why === 'busy') return 'busy'
+  if (!got.ok && (got.why === 'blocked' || got.why === 'robots' || got.why === 'ai')) {
+    if (step === 1)
+      store.putProbe({
+        runId: run.runId,
+        source: key,
+        data: { verdict: got.why === 'blocked' ? 'blocked' : got.why, status: got.status ?? 0 },
+        text: null,
+      })
+    else {
+      const cur = store.probes(run.runId).find((r) => r.source === key)
+      if (cur) store.putProbe({ ...cur, data: { ...cur.data, fp2: null, same: false, status2: got.status ?? 0 } })
+    }
+    return 'done'
+  }
   let text: string | null = null
   if (got.ok) {
     const t = responseText(got).text
@@ -935,8 +1030,8 @@ async function termsJob(x: Ctx, key: string, url: string, step: 1 | 2): Promise<
       data: { verdict: 'ok', status: got.status ?? 0, chars: text === null ? 0 : Array.from(text).length, fp },
       text: text === null ? null : Array.from(text).slice(0, 20_000).join(''),
     })
-    // 同じページを2回取って、同じ指紋になるかを見る
-    x.c.jobs!.unshift({ k: 'terms', key, url, step: 2 })
+    // 同じページを2回取って、同じ指紋になるかを見る（読めた時だけ）
+    if (got.ok) x.c.jobs!.unshift({ k: 'terms', key, url, step: 2 })
     return 'done'
   }
   const cur = store.probes(run.runId).find((r) => r.source === key)

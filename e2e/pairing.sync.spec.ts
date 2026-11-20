@@ -357,7 +357,9 @@ test(
       const m = (await import(/* @vite-ignore */ file)) as { CONNECTOR_ORIGIN: string }
       return m.CONNECTOR_ORIGIN
     }, '/src/features/claude/connectLogic.ts')
-    expect(origin).toMatch(/^https:\/\//)
+    expect(origin, '開発サーバーに VITE_CONNECTOR_ORIGIN が無い（playwright.sync.config.ts の webServer.env）').toMatch(
+      /^https:\/\//,
+    )
     // 持ち主としてログインし、トップが出るまで待つ（同期が始まり、データの形の版をこのアプリの版にする）
     await signInSync(page, sub)
     expect(await page.evaluate(() => window.__ts.syncUid())).toBe(ownerUid)

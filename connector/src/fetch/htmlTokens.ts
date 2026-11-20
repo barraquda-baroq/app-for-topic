@@ -491,16 +491,60 @@ export interface BodyResult {
   metas: { name: string; content: string }[]
   /** 印ごとの、その印で始まる行の数と落とした数（countMarks の並びの番号ごと） */
   marks: { lines: number; dropped: number }[]
+  /** 記者の質問の段の続きとして落とした行・話し手の印で段を終えた行の数 */
+  cont: QaCont
 }
 
 const nfkc = (s: string) => s.normalize('NFKC')
 const charLen = (s: string) => Array.from(s).length
 
 /**
- * 話し手の印で始まる行か（NFKC の後。「(大臣)」「【長官】」「答:」「A.」など。記者の質問の段の終わりを決める。答えの印は府省ごとに違うので、
- * 括弧の中の短い名前・短い語とコロン・A と答の印を広く当てる）
+ * 話し手の印で始まる行か（NFKC の後。「(大臣)」「【長官】」「大臣:」「答:」「A.」など。記者の質問の段の終わりを決める）。括弧の形は中の短い
+ * 名前（数字・英字や仮名1字・記号・漢数字だけの (1)・(ア)・(a)・(一) は質問の中の番号なので当てない）、コロンの形は前の語が答える人の語
+ * （ANSWER_WORDS）を含む時だけ（「関連して:」は質問の続き）。当てない側に寄せると質問の段を長く落とす（第三者の部分を残さない）
  */
-const SPEAKER = /^(?:[(【[〔][^)】\]〕]{1,12}[)】\]〕]|[^\s:]{1,10}:|A[.)]|答[.)])/
+const SPEAKER_BRACKET = /^[(【[〔]([^)】\]〕]{1,12})[)】\]〕]/
+const SPEAKER_COLON = /^([^\s:]{1,10}):/
+const SPEAKER_SHORT = /^(?:A[.):]|答[.):])/
+/** 番号の形（括弧の中がこれだけなら話し手の印ではない） */
+const ENUMERATOR = /^(?:\d+|[A-Za-z]|[ivxIVX]+|[ァ-ヶ]|[ぁ-ゖ]|[一二三四五六七八九十]+|[\p{P}\p{S}]+)$/u
+/** 答える人の語（コロンの形の話し手の印） */
+export const ANSWER_WORDS: readonly string[] = [
+  '大臣',
+  '政務官',
+  '長官',
+  '総理',
+  '次官',
+  '報道官',
+  '審議官',
+  '局長',
+  '部長',
+  '課長',
+  '室長',
+  '委員長',
+  '総裁',
+  '知事',
+  '担当',
+  '説明者',
+  '答',
+  '回答',
+  '司会',
+  '事務局',
+]
+
+function isSpeaker(n: string): boolean {
+  if (SPEAKER_SHORT.test(n)) return true
+  const b = SPEAKER_BRACKET.exec(n)
+  if (b) return !ENUMERATOR.test(b[1].trim())
+  const c = SPEAKER_COLON.exec(n)
+  return c !== null && ANSWER_WORDS.some((w) => c[1].includes(w))
+}
+
+/** 記者の質問の段の続きの数（probe の qa.cont。続きとして落とした行・話し手の印で段を終えた行） */
+export interface QaCont {
+  dropped: number
+  ended: number
+}
 
 /**
  * 行を掃除する（空白・空の行・案内の行・同じ行の重なり・記者の質問の段）。記者の質問の段は、質問の印で始まる行から、次に話し手の印
@@ -510,13 +554,14 @@ const SPEAKER = /^(?:[(【[〔][^)】\]〕]{1,12}[)】\]〕]|[^\s:]{1,10}:|A[.)]
 export function cleanLines(
   raw: readonly string[],
   opts: Pick<BodyOptions, 'dropLines' | 'dropBlocks' | 'countMarks'>,
-): { lines: string[]; marks: { lines: number; dropped: number }[] } {
+): { lines: string[]; marks: { lines: number; dropped: number }[]; cont: QaCont } {
   const drop = new Set((opts.dropLines ?? []).map((l) => squash(nfkc(l))))
   const blocks = (opts.dropBlocks ?? []).map((b) => squash(nfkc(b)))
   const count = (opts.countMarks ?? []).map((b) => squash(nfkc(b)))
   const marks = count.map(() => ({ lines: 0, dropped: 0 }))
   const seen = new Set<string>()
   const lines: string[] = []
+  const cont: QaCont = { dropped: 0, ended: 0 }
   let inQuestion = false
   for (const r of raw) {
     const line = squash(r)
@@ -535,7 +580,11 @@ export function cleanLines(
     }
     // 記者の質問の続きの段（話し手の印の行が来るまで）
     if (inQuestion) {
-      if (!SPEAKER.test(n)) continue
+      if (!isSpeaker(n)) {
+        cont.dropped += 1
+        continue
+      }
+      cont.ended += 1
       inQuestion = false
     }
     if (drop.has(n)) continue
@@ -543,7 +592,7 @@ export function cleanLines(
     seen.add(line)
     lines.push(line)
   }
-  return { lines, marks }
+  return { lines, marks, cont }
 }
 
 /** 本文を読む（scopes の要素ごとに行を集め、200字以上の最初の物・無ければいちばん長い物・どれも無ければページ全体） */
@@ -641,6 +690,7 @@ export function readBody(events: readonly HtmlEvent[], opts: BodyOptions = {}): 
     date,
     metas,
     marks: chosen.marks,
+    cont: chosen.cont,
   }
 }
 
@@ -652,7 +702,13 @@ export function readAnchor(
   events: readonly HtmlEvent[],
   anchor: string,
   opts: Pick<BodyOptions, 'dropLines' | 'dropBlocks' | 'countMarks'> = {},
-): { lines: string[]; chars: number; title: string | null; marks: { lines: number; dropped: number }[] } | null {
+): {
+  lines: string[]
+  chars: number
+  title: string | null
+  marks: { lines: number; dropped: number }[]
+  cont: QaCont
+} | null {
   const stack: string[] = []
   let active = false
   let found = false
@@ -706,6 +762,6 @@ export function readAnchor(
   }
   flush()
   if (!found) return null
-  const { lines, marks } = cleanLines(raw, opts)
-  return { lines, chars: charLen(lines.join('\n')), title: lines[0] ?? null, marks }
+  const { lines, marks, cont } = cleanLines(raw, opts)
+  return { lines, chars: charLen(lines.join('\n')), title: lines[0] ?? null, marks, cont }
 }

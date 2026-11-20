@@ -434,6 +434,8 @@ describe('probe（試しの回）', () => {
     // 記者の質問の印ごとの行の数（1001 のページの「（記者）」「【記者】」）
     expect(row('fake-html')).toContain('qa0.lines=1')
     expect(row('fake-html')).toContain('qa0.dropped=1')
+    // 記者の質問の段の続きの数（1001 のページは「（記者）」の段が「（長官）」で終わる）
+    expect(row('fake-html')).toContain('qa.cont.ended=')
   })
 
   it("'hosts': 今は取らない所の robots.txt を1回だけ。403 の時だけ規約のページ1つの番号（本文は読まない）。候補は集めない", async () => {
@@ -471,6 +473,78 @@ describe('probe（試しの回）', () => {
     // robots.txt を読めていない今は取らない所は取らない
     expect(r.text).toMatch(/- fake-pending\.t0: verdict=skipped/)
     expect(s.core.store.candidateCount(runId, false)).toBe(0)
+  })
+})
+
+describe('横断の点検で直した所（候補集め・probe）', () => {
+  it('□□ボイスの /feed/ が X-Robots-Tag: noai を返すと、控えも候補も作らず、ホストを止め、出どころの数に ai が出る', async () => {
+    const s = await setup(jst(10, 16), {}, undefined, (n) => {
+      const r = n.routes.get('https://example.com/fake-voices/feed/') as { body: string; headers: Record<string, string> }
+      n.set('https://example.com/fake-voices/feed/', { ...r, headers: { ...r.headers, 'x-robots-tag': 'noai, noimageai' } })
+    })
+    const runId = await collect(s)
+    expect(s.core.store.materials(runId).filter((m) => m.source === 'fake-voices')).toHaveLength(0)
+    expect(s.core.store.candidates(runId).filter((c) => c.source === 'fake-voices')).toHaveLength(0)
+    expect(s.core.store.hostRule('example.com')!.state).toBe('stopped')
+    expect(s.core.store.runCount(runId, 'src:fake-voices:gate:ai')).toBe(1)
+  })
+
+  it('HTML の一覧のページの meta noai でも、題を候補に取らずに止める', async () => {
+    const s = await setup(jst(10, 16), {}, undefined, (n) => {
+      const r = n.routes.get('https://example.com/fake-ministry/press/index.html') as { body: string }
+      n.html(
+        'https://example.com/fake-ministry/press/index.html',
+        r.body.replace('<head>', '<head><meta name="robots" content="noai">'),
+      )
+    })
+    const runId = await collect(s)
+    expect(s.core.store.candidates(runId).filter((c) => c.source === 'fake-html')).toHaveLength(0)
+    expect(s.core.store.runCount(runId, 'src:fake-html:gate:ai')).toBe(1)
+  })
+
+  it("probe 'terms': 規約のページが 403 なら、そのページを2回目に取らず、同じホストのほかの規約のページも取らない", async () => {
+    const s = await setup()
+    s.news.set('https://example.com/fake-ministry/terms.html', { status: 403 })
+    const runId = await collect(s, {
+      kind: 'trial',
+      probe: 'terms',
+      skip: ['fake-anchor', 'fake-met', 'fake-voices'],
+    })
+    const terms = s.news.urls().filter((u) => !u.endsWith('robots.txt') && !u.endsWith('tdmrep.json'))
+    expect(terms).toEqual(['https://example.com/fake-ministry/terms.html'])
+    expect(s.core.store.hostRule('example.com')!.state).toBe('unreadable')
+    const r = await s.core.callTool('topic_status', { runId }, { grant: s.grant })
+    expect(r.text).toMatch(/- fake-html\.t0: verdict=blocked・status=403/)
+    expect(r.text).toMatch(/- fake-rss\.t0: verdict=unreadable/)
+  })
+
+  it("probe 'hosts': 403 だった今は取らない所は、次の日も robots.txt と statusUrl を取らない。同じ日に2回呼んでも1回だけ", async () => {
+    const s = await setup()
+    s.news.robots('pending.example.com', null, 403)
+    s.news.set('https://pending.example.com/terms.html', { status: 403 })
+    const pending = () => s.news.urls().filter((u) => u.includes('pending.example.com'))
+    await collect(s, { kind: 'trial', probe: 'hosts' })
+    expect(pending()).toEqual(['https://pending.example.com/robots.txt', 'https://pending.example.com/terms.html'])
+    // 同じ日の2回目
+    s.clock.now += 20 * 60_000
+    const again = await collect(s, { kind: 'trial', probe: 'hosts' })
+    expect(pending()).toHaveLength(2)
+    expect((await s.core.callTool('topic_status', { runId: again }, { grant: s.grant })).text).toMatch(
+      /- fake-pending: verdict=tried-before・robots=403/,
+    )
+    // 26時間後（次の日）も取らない
+    s.clock.now += 26 * 3_600_000
+    await collect(s, { kind: 'trial', probe: 'hosts' })
+    expect(pending()).toHaveLength(2)
+  })
+
+  it("probe 'hosts': 取ってよかった（200・404）所は、次の日にはもう一度確かめられる", async () => {
+    const s = await setup()
+    s.news.robots('pending.example.com', 'User-agent: *\nAllow: /')
+    await collect(s, { kind: 'trial', probe: 'hosts' })
+    s.clock.now += 26 * 3_600_000
+    await collect(s, { kind: 'trial', probe: 'hosts' })
+    expect(s.news.urls().filter((u) => u === 'https://pending.example.com/robots.txt')).toHaveLength(2)
   })
 })
 

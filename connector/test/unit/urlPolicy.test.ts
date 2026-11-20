@@ -152,4 +152,34 @@ describe('URL の決まり', () => {
     // 2語までの道（一覧の名前など）はそのまま
     expect(pathShape('/press-release/list.html')).toBe('/press-release/list.html')
   })
+
+  it('続いたスラッシュの道（//other-rules/・/fake-ministry//rss/）は、本文としても一覧としても取らない', () => {
+    expect(checkBodyUrl(src, 'https://example.com/fake-ministry/other-rules/a.html').ok).toBe(false)
+    for (const u of [
+      'https://example.com//fake-ministry/other-rules/a.html',
+      'https://example.com/fake-ministry//other-rules/a.html',
+      'https://example.com/fake-ministry//rss/a.html',
+      'https://example.com/fake-ministry//kaiken/1.html',
+    ]) {
+      const c = checkBodyUrl(src, u)
+      expect(c.ok, u).toBe(false)
+      expect(itemRefusal(src, u), u).toBe('deny')
+    }
+    expect(checkListUrl(src, src.lists[0], 'https://example.com/fake-ministry//press/index.html').ok).toBe(false)
+    // 一重の道はこれまでどおり
+    expect(checkBodyUrl(src, 'https://example.com/fake-ministry/press/1001.html').ok).toBe(true)
+  })
+
+  it('<?xml-stylesheet?>・<!DOCTYPE>・注が頭にある RSS・RDF も配信と見る。text/xml の頭に channel・item・entry があれば配信', () => {
+    const pi =
+      '<?xml version="1.0" encoding="UTF-8"?>\n<?xml-stylesheet type="text/xsl" href="/fake.xsl"?>\n<rss version="2.0"><channel>'
+    expect(isFeedResponse('text/xml', pi)).toBe(true)
+    expect(isFeedResponse(null, pi)).toBe(true)
+    const rdf = '<?xml version="1.0"?>\n<!DOCTYPE rdf:RDF>\n<!-- fake -->\n<rdf:RDF xmlns:rdf="x">'
+    expect(isFeedResponse('text/xml', rdf)).toBe(true)
+    expect(isFeedResponse('application/xml', '<?xml version="1.0"?><fake-root><channel><title>x</title>')).toBe(true)
+    // HTML はこれまでどおり配信ではない
+    expect(isFeedResponse('text/html', '<!DOCTYPE html><html><body><p>item</p></body></html>')).toBe(false)
+    expect(isFeedResponse('text/html', '<!DOCTYPE html><html><body><item>x</item></body></html>')).toBe(false)
+  })
 })

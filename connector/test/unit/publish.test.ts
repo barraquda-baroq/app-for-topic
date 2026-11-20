@@ -7,6 +7,7 @@ import { editionFailIdOf, termIdOf, topicShortId } from '../../../src/domain/ids
 import { fakeRecordsOf, makeFakeEdition } from '../../../src/test/fixtures/fakeEditions'
 import { WRITE_RESERVE as CORE_WRITE_RESERVE } from '../../src/vault/core'
 import { WRITE_RESERVE } from '../../src/vault/quota'
+import { RequestTimeout } from '../../src/vault/timeout'
 import { FakeFirebase } from '../support/fakeFirebase'
 import { draftInput, draftSetup, newTerm, placeVerified, seedMaterial } from '../support/drafts'
 import { drainAlarms, OWNER, seedRecords } from '../support/harness'
@@ -100,6 +101,41 @@ describe('話題を足す（topic_add_topics）', () => {
     expect(s.commits).toHaveLength(2)
     expect(s.commits[1][0]).toMatch(/^termPacks:/)
     expect(s.commits[1].filter((n) => n.startsWith('termPacks:'))).toHaveLength(1)
+  })
+
+  it('commit は届いたのに答えが待ち切りで失敗し、順位を替えて送り直しても、2本目の話題を書かない（横断の点検）', async () => {
+    const fake = new FakeFirebase()
+    let timeoutNext = false
+    const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input)
+      const res = await fake.fetch(input as never, init)
+      if (timeoutNext && url.includes(':commit')) {
+        timeoutNext = false
+        throw new RequestTimeout(1)
+      }
+      return res
+    }) as typeof globalThis.fetch
+    const s = await draftSetup({ fake, config: { fetch } })
+    const ids: string[] = []
+    for (let i = 1; i <= 5; i++) {
+      seedMaterial(s.core, s.runId, i)
+      ids.push(await placeVerified(s.call, s.clock, draftInput(i)))
+    }
+    const topicsInCloud = () => [...fake.docs.keys()].filter((k) => k.includes('/records/topics:')).length
+    timeoutNext = true
+    const first = await s.call('topic_add_topics', { items: items(ids) })
+    expect(first.isError).toBe(true)
+    expect(topicsInCloud()).toBe(5)
+    const firstIds = s.core.store.drafts(s.runId).map((d) => d.topicId)
+    expect(firstIds.every((t) => t === null)).toBe(true)
+    // 並べ替えて送り直す
+    const again = await s.call('topic_add_topics', { items: ids.map((draft, i) => ({ draft, rank: 10 - i })) })
+    expect(again.isError, again.text).toBeUndefined()
+    expect(again.text).toContain('もう足してありました。順位は前の 1 のまま')
+    expect(topicsInCloud()).toBe(5)
+    const rows = s.core.store.drafts(s.runId)
+    expect(rows.map((d) => d.rank)).toEqual([1, 2, 3, 4, 5])
+    for (const d of rows) expect(fake.docs.has(`${fake.root}/users/${OWNER}/records/topics:${d.topicId}`)).toBe(true)
   })
 
   it('照合待ち・照合で外した・この回に無い下書きはとばす（訳を返す）', async () => {

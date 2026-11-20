@@ -3,7 +3,8 @@
 //   項目のリンクは同じ社の本文のホストの https: に直し、直せない物は取らない
 // - ホストは出どころの hosts.list（一覧）と hosts.body（本文）だけ（規約のページは probe と見張りの時だけ）。その上で allowPaths の中・
 //   denyPaths の外。PDF は読まない。転送は同じホストの中だけで3回まで（取る側で）。denyPaths は、大文字・小文字と %xx の書き方を
-//   替えた道（/Churoi/・/%63huroi/）でもすり抜けないよう、そろえてから比べる
+//   替えた道（/Churoi/・/%63huroi/）でもすり抜けないよう、そろえてから比べる。続いたスラッシュ（//churoi/）の道は取らない（一重と同じに
+//   読むサーバーで、denyPaths・qaPages・robots.txt の道の前方一致をすり抜けないように）
 // - 1つの応答は 1MB で読むのを止める。文字の符号は Content-Type・XML の宣言・<meta charset> の順に見る（国土交通省の RSS は Shift_JIS）
 // - RSS の断りのある出どころでは、RSS・Atom の応答（Content-Type か中身の頭）を本文として受けず、配信の形の道（.rdf・.rss・.xml・.atom）は
 //   本文としても一覧としても取りに行かない
@@ -54,6 +55,9 @@ export const pathDenied = (path: string, denyPaths: readonly string[]): boolean 
   return denyPaths.some((d) => p.startsWith(denyForm(d)))
 }
 
+/** 続いたスラッシュのある道か（//churoi/・/jp//rss/。取らない） */
+export const hasDoubleSlash = (path: string): boolean => path.includes('//')
+
 /** 配信（RSS・Atom）の形の道か（RSS の断りのある出どころで取りに行かない） */
 export const isFeedPath = (path: string): boolean => /\.(?:rdf|rss|xml|atom)$/i.test(path)
 
@@ -67,7 +71,7 @@ export function checkBodyUrl(src: SourceConfig, raw: string): UrlCheck {
   if (u.protocol !== 'https:') return { ok: false, why: 'scheme' }
   const host = u.hostname.toLowerCase()
   if (!src.hosts.body.includes(host)) return { ok: false, why: 'host' }
-  if (pathDenied(u.pathname, src.denyPaths)) return { ok: false, why: 'deny' }
+  if (hasDoubleSlash(u.pathname) || pathDenied(u.pathname, src.denyPaths)) return { ok: false, why: 'deny' }
   if (src.terms.rssRefused && isFeedPath(u.pathname)) return { ok: false, why: 'deny' }
   if (!pathIn(u.pathname, src.allowPaths)) return { ok: false, why: 'path' }
   if (isPdfPath(u.pathname)) return { ok: false, why: 'pdf' }
@@ -81,7 +85,7 @@ export function checkListUrl(src: SourceConfig, list: ListConfig, raw: string): 
   const httpOk = list.kind === 'rss' && list.http === true && src.permit?.rssAllowed === true
   if (u.protocol !== 'https:' && !(u.protocol === 'http:' && httpOk)) return { ok: false, why: 'scheme' }
   if (!src.hosts.list.includes(u.hostname.toLowerCase())) return { ok: false, why: 'host' }
-  if (pathDenied(u.pathname, src.denyPaths)) return { ok: false, why: 'deny' }
+  if (hasDoubleSlash(u.pathname) || pathDenied(u.pathname, src.denyPaths)) return { ok: false, why: 'deny' }
   if (src.terms.rssRefused && (list.kind !== 'html' || isFeedPath(u.pathname))) return { ok: false, why: 'deny' }
   return { ok: true, url: u }
 }
@@ -135,15 +139,24 @@ export const isPdfResponse = (contentType: string | null): boolean => mimeOf(con
 
 const FEED_TYPES = new Set(['application/rss+xml', 'application/atom+xml', 'application/rdf+xml'])
 
-/** RSS・Atom の応答か（Content-Type か、中身の頭が <rss・<rdf:RDF・<feed） */
+/** 頭の処理命令（<?xml?>・<?xml-stylesheet?>）・<!DOCTYPE>・注・空白 */
+const XML_PROLOG = /^(?:\s+|<\?[\s\S]*?\?>|<!DOCTYPE[^>]*>|<!--[\s\S]*?-->)/i
+
+/**
+ * RSS・Atom の応答か（Content-Type か、中身の頭が <rss・<rdf:RDF・<feed。頭の <?xml-stylesheet?>・<!DOCTYPE>・注は飛ばす）。
+ * Content-Type が text/xml・application/xml の時は、頭の中に <channel・<item・<entry があれば配信と見る（断る側に寄せる）
+ */
 export function isFeedResponse(contentType: string | null, head: string): boolean {
-  if (FEED_TYPES.has(mimeOf(contentType))) return true
-  const t = head
-    .replace(/^﻿/, '')
-    .replace(/^\s*<\?xml[^>]*\?>/i, '')
-    .replace(/^\s*(?:<!--[\s\S]*?-->\s*)*/, '')
-    .trimStart()
-  return /^<(?:rss|rdf:RDF|feed)[\s>]/i.test(t)
+  const mime = mimeOf(contentType)
+  if (FEED_TYPES.has(mime)) return true
+  let t = head.replace(/^\uFEFF/, '')
+  for (let i = 0; i < 50; i++) {
+    const m = XML_PROLOG.exec(t)
+    if (!m || !m[0]) break
+    t = t.slice(m[0].length)
+  }
+  if (/^<(?:rss|rdf:RDF|feed)[\s>]/i.test(t)) return true
+  return (mime === 'text/xml' || mime === 'application/xml') && /<(?:channel|item|entry)[\s>]/i.test(head)
 }
 
 /** 確認画面か（Cloudflare などの cf-mitigated: challenge・「Just a moment...」の頁） */

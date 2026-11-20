@@ -24,7 +24,8 @@ import { parseFeed } from '../../fetch/rss'
 import { sourceById, sourceForUrl, type SourceConfig } from '../../fetch/sources'
 import { sourceGate } from '../../fetch/terms'
 import { checkListUrl, itemUrl, listHopOk } from '../../fetch/urlPolicy'
-import { checkPath, jmaWatchEnabled, jmaWatchStep, rulesStep } from '../../fetch/watch'
+import { checkPath, jmaWatchEnabled, jmaWatchStep, markBodyStop, rulesStep } from '../../fetch/watch'
+import { headerAiStop } from '../../fetch/aiSignals'
 import type { ToolHandler, VaultCore } from '../core'
 import { ConnectorError } from '../errors'
 import { COLLECT_WAIT_MS, dateTimeText, markMaterialRead, type FetchWork } from '../runs'
@@ -255,6 +256,12 @@ async function feedMaterial(
     hop: (u) => listHopOk(src, list, u),
   })
   if (!got.ok) return { refusal: BODY_REFUSAL_TEXTS[got.why === 'host-budget' ? 'budget' : got.why] }
+  // RSS の全文が本文なので、この応答の AI への意思表示（X-Robots-Tag の noai・TDMRep の見出し）で止める
+  const stop = headerAiStop(got.headers)
+  if (stop) {
+    markBodyStop(core.store, check.url.hostname.toLowerCase(), core.now(), stop)
+    return { refusal: BODY_REFUSAL_TEXTS.ai }
+  }
   const { text } = responseText(got)
   if (text === null) return { refusal: BODY_REFUSAL_TEXTS.charset }
   const same = (a: string, b: string) => a.replace(/\/$/, '') === b.replace(/\/$/, '')

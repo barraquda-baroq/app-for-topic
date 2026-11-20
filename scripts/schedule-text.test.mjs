@@ -198,4 +198,24 @@ describe('docs/SCHEDULE.md の作り方と印', () => {
     // リポジトリの外の URL を書かない（手順書どうしは相対のリンク）
     expect(doc).not.toMatch(/https?:\/\//)
   })
+
+  it('試しの回（S2b）で使えない道具（作れなかった印・訂正）を、試しの回の箇条に書く（コネクタの TOOL_RUN_KINDS と同じ）', () => {
+    const runs = read('../connector/src/vault/runs.ts')
+    const kinds = (tool) => {
+      const m = new RegExp(`${tool}: \\[([^\\]]*)\\]`).exec(runs)
+      expect(m, tool).not.toBeNull()
+      return m[1]
+    }
+    const bullet = doc.slice(doc.indexOf('- 試しの回（S2b）は'), doc.indexOf('## 2. 定期実行の作り方'))
+    for (const tool of ['topic_add_edition_fail', 'topic_add_correction'])
+      if (!kinds(tool).includes("'trial'")) expect(bullet, tool).toContain(`\`${tool}\``)
+  })
+
+  it('開発が作る時は、時刻を入れずに作り、モデルを入れてから時刻を入れる（止めた形で作る。D7）', () => {
+    const steps = doc.slice(doc.indexOf('### 2-A.'), doc.indexOf('### 2-B.'))
+    expect(steps).toContain('時刻（`cron_expression`）だけを入れずに作る')
+    expect(steps.indexOf('`model` を入れ')).toBeLessThan(steps.indexOf('`cron_expression`（`CRON_TZ=Asia/Tokyo 16 10,18 * * *`）を入れて動かす'))
+    expect(steps).not.toContain('止めた形で作る欄が無い')
+    expect(doc.slice(doc.indexOf('### 2-B.'), doc.indexOf('### 2-C.'))).toContain('モデルを決めてから保存する')
+  })
 })

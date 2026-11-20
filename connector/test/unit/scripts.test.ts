@@ -149,6 +149,25 @@ describe('docs/CONNECTOR.md（手順書）', () => {
     expect(settings).toContain("CONNECTOR_UNSET_TEXT = 'コネクタはまだ用意されていません（docs/CONNECTOR.md）'")
   })
 
+  it('手元のコネクタにつなぐ手順に、connector.local.json が先に効く事を書く（vite.config.ts の connectorOrigin と同じ。横断の点検）', () => {
+    const at = doc.indexOf('VITE_CONNECTOR_ORIGIN=http://localhost:8787')
+    expect(at).toBeGreaterThan(0)
+    const bullet = doc.slice(doc.lastIndexOf('\n  - ', at), at)
+    expect(bullet).toContain('`connector.local.json` があれば、')
+    expect(bullet).toContain('そちらが優先されます')
+    // vite.config.ts は、ファイルの origin を先に読み、無い時だけ環境変数を見る
+    expect(fs.readFileSync(path.join(repoDir, 'vite.config.ts'), 'utf8')).toContain(
+      "if (!raw) raw = env.VITE_CONNECTOR_ORIGIN ?? ''",
+    )
+  })
+
+  it('9-C の「取りを止めました」の行は、robots.txt から出た止めが data では外れない事と、本文の止めの外し方を分けて書く（横断の点検）', () => {
+    const row = doc.split('\n').find((l) => l.startsWith('| 「取りを止めました（AI への意思表示が出ました。作者に伺います）」'))
+    expect(row).toBeDefined()
+    expect(row).toContain('サイトの意思表示が無くなるまで外れない（data では外せない）')
+    expect(row).toContain('止めた日より後の日を data の確かめた日（`terms.accepted`）に入れて公開し直すと外れる')
+  })
+
   it('同意の画面と同じ「できること・できないこと」と資料の出どころの1行', () => {
     const intro = doc.slice(0, doc.indexOf('## 仕組み'))
     expect(intro).toContain(`Claude ができること: ${CONSENT_CAN.join('／')}`)

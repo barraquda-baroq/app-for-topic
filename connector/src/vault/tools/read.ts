@@ -12,6 +12,7 @@ import { isOneOf, GENRE_VALUES, REGION_VALUES, type TermEntry } from '../../../.
 import type { ToolCallContext, ToolHandler, VaultCore } from '../core'
 import { ConnectorError, MESSAGES } from '../errors'
 import type { Lite } from '../mirror'
+import { DAY_FETCH_LIMIT, envOf, netToday } from '../../fetch/article'
 import { COLLECT_WAIT_MS, editionText, type SourceView } from '../runs'
 import type { MirrorStore, ProbeRow, RunRow } from '../store'
 import { fenced, FENCE_LABELS, ok, stripMarks, strList, str } from './common'
@@ -66,7 +67,14 @@ export function sourceStateOf(src: SourceView, store: MirrorStore, now: number, 
   if (!opts.trial && (src.terms.status === 'trial-only' || !fingerprinted)) return out('trial-only')
   if (src.permit?.until && today > src.permit.until) return out('permit-expired')
   if (flags.refusedTerms) return out('terms')
-  if (src.termsPages.some((p) => store.termsWatch(p.url)?.state === 'changed')) return out('terms-changed')
+  // 規約のページが変わった（data の指紋が、見た時のままの間。開発が読み直して data の指紋を新しくすると外れる）
+  if (
+    src.termsPages.some((p) => {
+      const w = store.termsWatch(p.url)
+      return w?.state === 'changed' && (w.expected === null || w.expected === undefined || w.expected === p.fingerprint)
+    })
+  )
+    return out('terms-changed')
   const fresh = rules.filter((r) => r !== null && r.day === today)
   if (fresh.some((r) => r!.state === 'stopped')) return out('ai')
   if (fresh.some((r) => r!.state === 'refused')) return out('robots')
@@ -161,6 +169,8 @@ export async function statusDetails(
   if (sources.length) {
     lines.push('出どころ:')
     for (const s of sources) lines.push(sourceStateLine(s, sourceStateOf(s, core.store, now, { trial: run?.kind === 'trial' })))
+    const dayLimit = envOf(core).dayLimit ?? DAY_FETCH_LIMIT
+    lines.push(`取りに行ける数: 今日（日本時間）あと ${Math.max(0, dayLimit - netToday(core))}本（1日 ${dayLimit}本まで）`)
   } else lines.push('出どころ: （出どころの data がまだありません）')
   if (run) {
     lines.push(`回: ${run.runId}`)

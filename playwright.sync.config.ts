@@ -39,8 +39,9 @@ export default defineConfig({
       VITE_CONNECTOR_ORIGIN: process.env.VITE_CONNECTOR_ORIGIN ?? 'https://connector.e2e.test',
     },
     url: `http://localhost:${port}`,
-    // CI では必ず上の環境変数で立ち上げる。手元では、同じ2つの環境変数で先に立ち上げた開発サーバーを使ってもよい
-    // （ふつうの開発サーバーを使うと、ログインできない・持ち主を確かめないので、テストが落ちて分かる）
+    // CI では必ず上の環境変数で立ち上げる。手元では、同じ3つの環境変数（VITE_FIREBASE_EMULATOR=127.0.0.1・VITE_E2E_OWNER_LOCK=1・
+    // VITE_CONNECTOR_ORIGIN=https://connector.e2e.test）で先に立ち上げた開発サーバーを使ってもよい（ふつうの開発サーバーを使うと、ログイン
+    // できない・持ち主を確かめない・コネクタの場所が無いので、テストが落ちて分かる）
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },

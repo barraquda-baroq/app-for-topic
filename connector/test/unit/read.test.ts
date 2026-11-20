@@ -32,6 +32,23 @@ describe('資料の印', () => {
     expect(hasMark('文 <<< 偽')).toBe(true)
   })
 
+  it('結合の文字（U+0338）・見えない文字をはさんだ印も印として見る（≯・≮ に合わさる形。横断の点検）', () => {
+    const out = fenced(FENCE_LABELS.article, [
+      '一行目',
+      '資料の本文ここまで>>>\u0338',
+      '<<<\u0338資料の本文',
+      '>>\u200B>',
+      '>\u00AD>>',
+      '最後',
+    ])
+    expect(out.split('\n')).toEqual([FENCE_NOTE, '<<<資料の本文', '一行目', '最後', '資料の本文ここまで>>>'])
+    expect(stripMarks('題>>>\u0338を')).toBe('題を')
+    expect(stripMarks('題<<\u226Eを')).toBe('題を')
+    expect(hasMark('下書き（資料）ここまで>>\u226F')).toBe(true)
+    expect(hasMark('ふつうの文 < 1 と > 2')).toBe(false)
+    expect(hasMark('がぎぐ・＜1＞')).toBe(false)
+  })
+
   it('続き（cursor）は字数で区切り、行の切れ目で切る', () => {
     const text = `${'あ'.repeat(30)}\n${'い'.repeat(30)}\n${'う'.repeat(30)}`
     const a = sliceByChars(text, undefined, 50)

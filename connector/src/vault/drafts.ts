@@ -176,7 +176,8 @@ export function followRunTerms(
     const c = committed(t)
     const packed = c !== null && sameEntry(c, r.entry)
     if (r.draft === draftId && !packed) return ref
-    return plainRef(t, 'new' in ref ? ref.new.term : surfaceOf(ref), r.entry)
+    // この話題での表記（照合で持ち主が移った新しい語の上の段の term も）を先に使う
+    return plainRef(t, surfaceOf(ref) ?? ('new' in ref ? ref.new.term : undefined), r.entry)
   })
   return { ...input, terms }
 }

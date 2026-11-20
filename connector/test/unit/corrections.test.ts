@@ -11,13 +11,30 @@ import { draftSetup, jst, seedMaterial, WRITER } from '../support/drafts'
 import { drainAlarms, OWNER, seedRecords } from '../support/harness'
 
 /** 作り物の版を2つ置いた上で回を始める（版の order にない話題も1つ置く） */
-async function withEditions(kind: 'edition' | 'correction', now = jst(14, 0)) {
+async function withEditions(kind: 'edition' | 'correction', now = jst(14, 0), lose?: { commits: number }) {
   const fake = new FakeFirebase()
   const a = makeFakeEdition({ date: '2026-11-18', slot: '20', seed: 'corr-a' })
   const b = makeFakeEdition({ date: '2026-11-17', slot: '12', seed: 'corr-b' })
   seedRecords(fake, [...fakeRecordsOf(a), ...fakeRecordsOf(b)])
-  const s = await draftSetup({ kind, fake, now })
-  return { ...s, a, b }
+  // lose: commit を通したあと、答えを 503 にする（届いたのに答えが届かない形）。lose.commits は 503 にする回数
+  const losing = {
+    on: false,
+    left: lose?.commits ?? 0,
+  }
+  const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input)
+    const res = await fake.fetch(input as never, init)
+    if (losing.on && url.includes(':commit') && losing.left > 0) {
+      losing.left -= 1
+      return new Response(JSON.stringify({ error: { code: 503, status: 'UNAVAILABLE', message: 'test' } }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    return res
+  }) as typeof globalThis.fetch
+  const s = await draftSetup({ kind, fake, now, config: lose ? { fetch } : undefined })
+  return { ...s, a, b, losing }
 }
 
 describe('訂正を足す（topic_add_correction）', () => {
@@ -149,6 +166,57 @@ describe('訂正を足す（topic_add_correction）', () => {
     const r = await s.call('topic_add_correction', { model: WRITER, topic: t.id, text: '作り物の11件目の訂正' })
     expect(r.isError).toBe(true)
     expect(r.text).toContain('1つの話題に訂正は 10件までです')
+  })
+
+  it('commit は届いたのに答えが 503 でも、この回の訂正として数え、作れなかった印の答えに出る（横断の点検）', async () => {
+    const s = await withEditions('edition', jst(10, 16), { commits: 1 })
+    const t = s.a.topics[1]
+    const text = '作り物の会議の日付は15日ではなく16日でした'
+    s.losing.on = true
+    const r = await s.call('topic_add_correction', { model: WRITER, topic: t.id, text })
+    s.losing.on = false
+    expect(r.isError, r.text).toBeUndefined()
+    expect(r.text).toContain('訂正を足しました')
+    expect(s.core.store.runCount(s.runId, 'corrections')).toBe(1)
+    seedMaterial(s.core, s.runId, 1)
+    const fail = await s.call('topic_add_edition_fail', { reasonKind: 'no-sources', reason: '読める資料が足りない' })
+    expect(fail.text).toContain('この回で足した訂正: 1件')
+    expect(fail.text).toContain(`- ${topicShortId(t.id)}「`)
+  })
+
+  it('commit は届いたのに答えが3回とも 503 で道具が失敗し、同じ訂正を送り直すと、この回の訂正として数える（横断の点検）', async () => {
+    const s = await withEditions('edition', jst(10, 16), { commits: 3 })
+    const t = s.a.topics[2]
+    const text = '作り物の数は 7件ではなく 8件でした'
+    s.losing.on = true
+    const first = await s.call('topic_add_correction', { model: WRITER, topic: t.id, text })
+    s.losing.on = false
+    expect(first.isError).toBe(true)
+    const again = await s.call('topic_add_correction', { model: WRITER, topic: t.id, text })
+    expect(again.isError, again.text).toBeUndefined()
+    expect(again.text).toContain('訂正を足しました')
+    expect(s.core.store.runCount(s.runId, 'corrections')).toBe(1)
+    // もう一度送っても数えは増えない
+    const third = await s.call('topic_add_correction', { model: WRITER, topic: t.id, text })
+    expect(third.text).toContain('同じ訂正はもうあります')
+    expect(s.core.store.runCount(s.runId, 'corrections')).toBe(1)
+    seedMaterial(s.core, s.runId, 1)
+    const fail = await s.call('topic_add_edition_fail', { reasonKind: 'no-sources', reason: '読める資料が足りない' })
+    expect(fail.text).toContain('この回で足した訂正: 1件')
+  })
+
+  it(`上限（版の回 ${CORRECTIONS_PER_RUN.edition}件）に届いた後に最後の訂正を送り直すと「もうある」。新しい訂正はこれまでどおり断る（横断の点検）`, async () => {
+    const e = await withEditions('edition', jst(10, 16))
+    const topics = [...e.a.topics, ...e.b.topics]
+    for (let i = 0; i < CORRECTIONS_PER_RUN.edition; i++)
+      await e.call('topic_add_correction', { model: WRITER, topic: topics[i].id, text: `作り物の訂正の文${i}` })
+    const last = CORRECTIONS_PER_RUN.edition - 1
+    const again = await e.call('topic_add_correction', { model: WRITER, topic: topics[last].id, text: `作り物の訂正の文${last}` })
+    expect(again.isError, again.text).toBeUndefined()
+    expect(again.text).toContain('同じ訂正はもうあります')
+    const over = await e.call('topic_add_correction', { model: WRITER, topic: topics[5].id, text: '作り物の訂正の文y' })
+    expect(over.isError).toBe(true)
+    expect(over.text).toContain(`1つの回に足せる訂正は${CORRECTIONS_PER_RUN.edition}件までです（版の回）`)
   })
 
   it('その回で足した訂正は、版の答えと作れなかった印の答えに全部出る（話題の短い id と文の頭20字）', async () => {

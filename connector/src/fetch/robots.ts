@@ -6,9 +6,12 @@
 //     作者に伺う
 // (d) 表に無い名前の組（初めて読んだ時の名前に無い物）が増え、その道を断っている時も (c) と同じに止める
 // 読めない時（5xx・時間切れ・403・確認画面）は、その日はそのホストから取らない（watch.ts）。404 は「決まりなし」。
-// 道の比べ方は RFC 9309（いちばん長く当たる規則。同じ長さなら Allow。* と $。ASCII でない字は %xx にそろえてから比べる）。組の名前は
-// 大文字・小文字を区別せず、版の書き（/1.0）を落として比べる。覚えきれない組（規則が上限を超えた組）は、どの道も断る側に読み、
-// 行が上限を超えた・1MB で切った robots.txt は、取りを止めて伺う（読み落とした断りで取らないように）
+// 道の比べ方は RFC 9309（いちばん長く当たる規則。同じ長さなら Allow。* と $。ASCII でない字は %xx にそろえ、予約でない字の %xx は字に
+// 戻してから比べる）。組の名前は大文字・小文字を区別せず、版の書き（/1.0）を落として比べる。UA の全文（`…/5.0 (compatible; ClaudeBot/1.0)`）
+// を書いた組は、中の Claude・ほかの AI の名前の組にも読む。組を区切るのは規則（Allow・Disallow）の後の User-agent だけ（Crawl-delay・
+// Sitemap・Host・Content-Signal などの行は組を区切らない。RFC 9309 の 2.2.4）。コロンの無い行（`Disallow /`）と、鍵のよくある書き違い
+// （`User agent`・`Useragent`・`Disalow` など）は、断る側に寄せて読む（Allow の書き違いは読まない）。覚えきれない組（規則が上限を超えた組）は、
+// どの道も断る側に読み、行が上限を超えた・1MB で切った robots.txt は、取りを止めて伺う（読み落とした断りで取らないように）
 import { fingerprint } from '../../../src/domain/hash'
 import { agentKey, agentKind, CLAUDE_USER_AGENT, CONNECTOR_AGENT, ANTHROPIC_AGENTS, hasAiWord } from './aiAgents'
 import { signalRefusals, tdmReserved, type TdmEntry } from './aiSignals'
@@ -42,14 +45,55 @@ const MAX_RULES = 400
 /** 読む robots.txt の行の上限 */
 const MAX_LINES = 5_000
 
-/** robots.txt を読む（RFC 9309。続けて書かれた User-agent の行は1つの組。規則の後の User-agent は次の組） */
+/** Disallow の鍵のよくある書き違い（断る側だけ広げる。Allow の書き違いは読まない） */
+const DISALLOW_TYPOS: ReadonlySet<string> = new Set(['disallow', 'dissallow', 'dissalow', 'disalow', 'diasllow', 'disallaw'])
+
+/** 鍵をそろえる（空白・'-' を落として小文字に。User-agent と Disallow の書き違いを読む） */
+function fieldKey(raw: string): string {
+  const k = raw.replace(/[\s-]/g, '').toLowerCase()
+  if (k === 'useragent') return 'user-agent'
+  if (DISALLOW_TYPOS.has(k)) return 'disallow'
+  if (k === 'crawldelay') return 'crawl-delay'
+  if (k === 'contentsignal') return 'content-signal'
+  if (k === 'contentusage') return 'content-usage'
+  return k
+}
+
+/** 行を鍵と値に分ける（コロンで。コロンの無い行は、空白で2つに分かれる時だけ空白で） */
+function splitLine(line: string): { field: string; value: string } | null {
+  const colon = line.indexOf(':')
+  if (colon > 0) return { field: fieldKey(line.slice(0, colon)), value: line.slice(colon + 1).trim() }
+  if (colon === 0) return null
+  const parts = line.split(/\s+/)
+  if (parts.length !== 2) return null
+  return { field: fieldKey(parts[0]), value: parts[1] }
+}
+
+/**
+ * User-agent の値から組の名前を出す（そろえた名前。UA の全文の形（空白・括弧・';' がある）は、中の Claude・ほかの AI の名前も足す。
+ * `…/5.0 (compatible; ClaudeBot/1.0)` の意図は ClaudeBot の断りなので）
+ */
+function agentNamesOf(value: string): string[] {
+  const out = [agentKey(value) || '*']
+  if (/[\s();]/.test(value))
+    for (const m of value.match(/[A-Za-z][A-Za-z0-9_-]*/g) ?? []) {
+      const kind = agentKind(m)
+      if (kind === 'anthropic' || kind === 'ai') out.push(agentKey(m))
+    }
+  return [...new Set(out)]
+}
+
+/**
+ * robots.txt を読む（RFC 9309。続けて書かれた User-agent の行は1つの組。規則（Allow・Disallow）の後の User-agent は次の組。
+ * Crawl-delay・Sitemap・Host・Content-Signal・知らない行は組を区切らない）
+ */
 export function parseRobots(text: string): ParsedRobots {
   const groups: RobotsGroup[] = []
   let cur: RobotsGroup | null = null
   let lastWasAgent = false
   let aiComment = false
   const signals: string[] = []
-  const all = text.replace(/^﻿/, '').split(/\r\n|\r|\n/)
+  const all = text.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/)
   const truncated = all.length > MAX_LINES
   const lines = all.slice(0, MAX_LINES)
   for (const raw of lines) {
@@ -57,26 +101,26 @@ export function parseRobots(text: string): ParsedRobots {
     if (hash >= 0 && hasAiWord(raw.slice(hash + 1))) aiComment = true
     const line = (hash >= 0 ? raw.slice(0, hash) : raw).trim()
     if (!line) continue
-    const colon = line.indexOf(':')
-    if (colon <= 0) continue
-    const field = line.slice(0, colon).trim().toLowerCase()
-    const value = line.slice(colon + 1).trim()
+    const kv = splitLine(line)
+    if (!kv) continue
+    const { field, value } = kv
     if (field === 'user-agent') {
       if (!cur || !lastWasAgent) {
         cur = { agents: [], rules: [] }
         groups.push(cur)
       }
-      cur.agents.push(agentKey(value) || '*')
+      for (const a of agentNamesOf(value)) if (!cur.agents.includes(a)) cur.agents.push(a)
       lastWasAgent = true
       continue
     }
-    lastWasAgent = false
     if (field === 'content-signal' || field === 'content-usage') {
       signals.push(...signalRefusals(field, value))
       continue
     }
     if (!cur) continue
     if (field === 'allow' || field === 'disallow') {
+      // 規則の行の後の User-agent は次の組
+      lastWasAgent = false
       // 空の Disallow は「何も断らない」（全部を許す規則として、いちばん短い Allow にする。空の Allow は読み飛ばす）
       if (!value && field === 'allow') continue
       if (cur.rules.length >= MAX_RULES) {
@@ -85,14 +129,15 @@ export function parseRobots(text: string): ParsedRobots {
       }
       cur.rules.push(value ? { allow: field === 'allow', pattern: value } : { allow: true, pattern: '' })
     } else if (field === 'crawl-delay') {
+      // 同じ組に2つあれば長い方
       const n = Number(value)
-      if (Number.isFinite(n) && n >= 0) cur.crawlDelay = Math.min(n, 3_600)
+      if (Number.isFinite(n) && n >= 0) cur.crawlDelay = Math.min(Math.max(cur.crawlDelay ?? 0, n), 3_600)
     }
   }
   return { groups, aiComment, signals: [...new Set(signals)], truncated }
 }
 
-/** 比べる形にそろえる（ASCII でない字を %xx に・%xx を大文字に。RFC 9309 の 2.2.2） */
+/** 比べる形にそろえる（ASCII でない字を %xx に・予約でない字（英数字と - . _ ~）の %xx は字に戻し、ほかの %xx は大文字に。RFC 9309 の 2.2.2） */
 function normPct(s: string): string {
   let t = s
   try {
@@ -100,7 +145,10 @@ function normPct(s: string): string {
   } catch {
     // 壊れた字（対になっていないサロゲート）はそのまま
   }
-  return t.replace(/%[0-9a-f]{2}/gi, (m) => m.toUpperCase())
+  return t.replace(/%[0-9a-f]{2}/gi, (m) => {
+    const c = String.fromCharCode(parseInt(m.slice(1), 16))
+    return /[A-Za-z0-9._~-]/.test(c) ? c : m.toUpperCase()
+  })
 }
 
 /** 規則の道の形がその道に当たるか（頭から。* は何でも、終わりの $ は道の終わり） */

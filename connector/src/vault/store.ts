@@ -36,6 +36,9 @@ const termsTable = (name: string) =>
 const formsTable = (name: string) =>
   `CREATE TABLE IF NOT EXISTS ${name} (form TEXT NOT NULL, term_id TEXT NOT NULL, PRIMARY KEY (form, term_id)) WITHOUT ROWID`
 
+/** 後から足した列（表・列の定め。SCHEMA の CREATE にも同じ列がある） */
+const ADDED_COLUMNS: readonly (readonly [string, string])[] = [['terms_watch', 'expected TEXT']]
+
 /** 表を作る SQL（どれも主の鍵の表で、別の索引を作らない。索引も行の書き込みに数えられるため） */
 export const SCHEMA: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
@@ -66,7 +69,7 @@ export const SCHEMA: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS host_rules (host TEXT PRIMARY KEY, day TEXT NOT NULL, state TEXT NOT NULL, crawl_delay REAL,
     data TEXT NOT NULL DEFAULT '{}', checked INTEGER NOT NULL, changed INTEGER) WITHOUT ROWID`,
   `CREATE TABLE IF NOT EXISTS terms_watch (url TEXT PRIMARY KEY, source TEXT NOT NULL, fingerprint TEXT, state TEXT NOT NULL,
-    checked INTEGER NOT NULL) WITHOUT ROWID`,
+    checked INTEGER NOT NULL, expected TEXT) WITHOUT ROWID`,
   `CREATE TABLE IF NOT EXISTS source_counts (source TEXT NOT NULL, at INTEGER NOT NULL, counts TEXT NOT NULL,
     PRIMARY KEY (source, at)) WITHOUT ROWID`,
   `CREATE TABLE IF NOT EXISTS source_state (source TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL) WITHOUT ROWID`,
@@ -245,9 +248,14 @@ export interface TermsWatchRow {
   url: string
   source: string
   fingerprint: string | null
-  /** same = data の指紋と同じ・changed = 違う（取りを止める）・unreadable = 読めなかった */
+  /**
+   * same = data の指紋と同じ・changed = 違う（取りを止める。data の指紋が新しくなるまで、次の週に同じ・読めないでも changed のまま）・
+   * unreadable = 読めなかった（2週続けば changed にする）
+   */
   state: 'same' | 'changed' | 'unreadable'
   checked: number
+  /** 見た時の data の指紋（changed を外すのは、data の指紋がこれと違う物に新しくなった時。無い行は外さない側に読む） */
+  expected?: string | null
 }
 
 /** 出どころの印（source_state。B4 が書く） */
@@ -404,6 +412,14 @@ export class MirrorStore {
     this.sql = sql
     this.#now = now
     for (const s of SCHEMA) sql.run(s)
+    // 後から足した列（前の形で作った表にだけ足す）
+    for (const [table, column] of ADDED_COLUMNS)
+      try {
+        const have = sql.all<{ name: string }>(`PRAGMA table_info(${table})`).map((r) => String(r.name))
+        if (!have.includes(column.split(' ')[0])) sql.run(`ALTER TABLE ${table} ADD COLUMN ${column}`)
+      } catch {
+        // 読めない時は足さない（CREATE の列のまま）
+      }
   }
 
   transaction<T>(fn: () => T): T {
@@ -938,14 +954,15 @@ export class MirrorStore {
 
   putTermsWatch(r: TermsWatchRow): void {
     this.sql.run(
-      `INSERT INTO terms_watch (url, source, fingerprint, state, checked) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO terms_watch (url, source, fingerprint, state, checked, expected) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(url) DO UPDATE SET source = excluded.source, fingerprint = excluded.fingerprint, state = excluded.state,
-         checked = excluded.checked`,
+         checked = excluded.checked, expected = excluded.expected`,
       r.url,
       r.source,
       r.fingerprint,
       r.state,
       r.checked,
+      r.expected ?? null,
     )
     this.countRows(1)
   }
@@ -959,6 +976,7 @@ export class MirrorStore {
       fingerprint: str(r.fingerprint),
       state: String(r.state) as TermsWatchRow['state'],
       checked: Number(r.checked),
+      expected: str(r.expected),
     }
   }
 

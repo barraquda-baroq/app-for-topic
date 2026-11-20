@@ -1,5 +1,6 @@
 // AI への意思表示の読み（段階3の設計の 1.7 の (2) の 2 の (c)。純粋な部品）: robots.txt の Content-Signal・Content-Usage の行、
-// /.well-known/tdmrep.json（TDM の留保）、本文の応答の X-Robots-Tag、HTML の <meta name="robots">。どれも AI の利用を断る値が出たら
+// /.well-known/tdmrep.json と応答の見出し・HTML の meta の tdm-reservation（TDM の留保）、本文と一覧の応答の X-Robots-Tag、
+// HTML の <meta name="robots">。どれも AI の利用を断る値が出たら
 // 「取りを止める」（作者に伺う）。断る値の読み方は、外す側（止める側）に寄せる。
 import { ANTHROPIC_AGENTS, AI_AGENTS, agentKey } from './aiAgents'
 import { patternMatches } from './robots'
@@ -77,10 +78,47 @@ export function tdmReserved(entries: readonly TdmEntry[] | null, path: string): 
 
 const NOAI = /(?:^|[\s,;:])(?:noai|noimageai)(?=$|[\s,;])/i
 
-/** X-Robots-Tag の値に noai・noimageai があるか（名前つきの値 `ClaudeBot: noai` も同じに見る） */
+/** X-Robots-Tag の指示のうち、名前（`ClaudeBot:`）でなく値に : を使う物 */
+const XRT_COLON_DIRECTIVES: ReadonlySet<string> = new Set([
+  'unavailable_after',
+  'max-snippet',
+  'max-image-preview',
+  'max-video-preview',
+])
+
+/**
+ * X-Robots-Tag の値が AI への意思表示か: noai・noimageai（名前つきの値 `ClaudeBot: noai` も同じに見る）と、Claude・Anthropic の名前の
+ * noindex・none（`ClaudeBot: noindex`。meta の metaNoAi と同じ決まり）。値は `,` で区切り、`名前:` で始まる所から次の `名前:` までを
+ * その名前の指示に読む
+ */
 export function xRobotsNoAi(value: string | null): boolean {
   if (!value) return false
-  return NOAI.test(value)
+  if (NOAI.test(value)) return true
+  let name: string | null = null
+  for (const raw of value.split(',')) {
+    let part = raw.trim()
+    const m = /^([^:]+?)\s*:\s*(.*)$/.exec(part)
+    if (m && !XRT_COLON_DIRECTIVES.has(m[1].trim().toLowerCase())) {
+      name = agentKey(m[1])
+      part = m[2]
+    }
+    if (name !== null && ANTHROPIC_META_NAMES.has(name) && /(?:^|\s)(?:noindex|none)(?=$|\s)/i.test(part)) return true
+  }
+  return false
+}
+
+/** TDMRep の応答の見出し（`tdm-reservation: 1`）で留保しているか */
+export const tdmHeaderReserved = (value: string | null): boolean => (value ?? '').trim() === '1'
+
+/** TDMRep の HTML の meta（`<meta name="tdm-reservation" content="1">`）で留保しているか */
+export const tdmMetaReserved = (name: string, content: string): boolean =>
+  name.trim().toLowerCase() === 'tdm-reservation' && content.trim() === '1'
+
+/** 応答の見出しの AI への意思表示（X-Robots-Tag の noai など・TDMRep の tdm-reservation: 1）。止める印か null */
+export function headerAiStop(headers: Headers): string | null {
+  if (xRobotsNoAi(headers.get('x-robots-tag'))) return 'x-robots-noai'
+  if (tdmHeaderReserved(headers.get('tdm-reservation'))) return 'tdm-reservation'
+  return null
 }
 
 const AI_META_NAMES: ReadonlySet<string> = new Set(['robots', ...ANTHROPIC_AGENTS.map(agentKey), ...AI_AGENTS.map(agentKey)])

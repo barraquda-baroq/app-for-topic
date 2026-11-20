@@ -103,7 +103,8 @@ describe('下書きを置く（topic_save_draft）', () => {
   it('資料の印の文字列（<<< >>>。全角も）を含む欄は断る', async () => {
     const { core, runId, call } = await draftSetup()
     seedMaterial(core, runId, 1)
-    for (const mark of [MARK_OPEN, MARK_CLOSE, '＜＜＜']) {
+    // 結合の文字（U+0338。>>≯ に合わさる）と見えない文字をはさんだ形も（横断の点検）
+    for (const mark of [MARK_OPEN, MARK_CLOSE, '＜＜＜', '>>>\u0338', '>>\u226F', '>>\u200B>']) {
       const r = await call('topic_save_draft', {
         model: WRITER,
         topic: draftInput(1, { unverified: [`作り物${mark}の点`] }),

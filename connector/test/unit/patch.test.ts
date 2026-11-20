@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest'
 import { termIdOf } from '../../../src/domain/ids'
 import type { TermEntry } from '../../../src/domain/types'
 import { buildDraft, CHECKS_PER_DRAFT, inputOf } from '../../src/vault/drafts'
-import { CHECKER, draftInput, draftSetup, newTerm, seedMaterial, WRITER } from '../support/drafts'
+import { CHECKER, draftInput, draftSetup, newTerm, placeVerified, seedMaterial, WRITER } from '../support/drafts'
+import { OWNER } from '../support/harness'
 
 const KEY = '作り物の制度'
 const ENTRY: TermEntry = {
@@ -231,5 +232,64 @@ describe('用語の説明を照合で直す（同じ回の語）', () => {
     await call('topic_get_draft', { draft: a })
     const ra = await check(a, [])
     expect(ra.isError, ra.text).toBeUndefined()
+  })
+
+  it('束を書いた後に、別の下書きが同じ語を別の説明で新しくすると、置く時に断る（同じ説明・termId なら置ける。横断の点検）', async () => {
+    const s = await draftSetup()
+    for (let i = 1; i <= 7; i++) seedMaterial(s.core, s.runId, i)
+    s.core.dictionary.apply([ENTRY], false)
+    const ids = [
+      await placeVerified(
+        s.call,
+        s.clock,
+        draftInput(1, { terms: [{ termId: ENTRY.termId, revise: { explanation: '作り物の説明 A', asOf: '2026-11' } }] }),
+      ),
+    ]
+    for (let i = 2; i <= 5; i++) ids.push(await placeVerified(s.call, s.clock, draftInput(i)))
+    const added = await s.call('topic_add_topics', { items: ids.map((draft, i) => ({ draft, rank: i + 1 })) })
+    expect(added.isError, added.text).toBeUndefined()
+    expect(s.core.dictionary.get(ENTRY.termId)).toMatchObject({ explanation: '作り物の説明 A', rev: 3 })
+    const refused = await s.call('topic_save_draft', {
+      model: WRITER,
+      topic: draftInput(6, { terms: [{ termId: ENTRY.termId, revise: { explanation: '作り物の説明 B', asOf: '2026-11' } }] }),
+    })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain('別の説明に新しくしています')
+    // 同じ説明の revise と termId だけの指し方は置ける
+    const same = await s.call('topic_save_draft', {
+      model: WRITER,
+      topic: draftInput(6, { terms: [{ termId: ENTRY.termId, revise: { explanation: '作り物の説明 A', asOf: '2026-11' } }] }),
+    })
+    expect(same.isError, same.text).toBeUndefined()
+    const plain = await s.call('topic_save_draft', { model: WRITER, topic: draftInput(7, { terms: [{ termId: ENTRY.termId }] }) })
+    expect(plain.isError, plain.text).toBeUndefined()
+  })
+
+  it('照合で持ち主が移った同じ回の新しい語は、束を書いた後に足しても、この話題での表記（別名）が残る（横断の点検）', async () => {
+    const s = await draftSetup()
+    for (let i = 1; i <= 6; i++) seedMaterial(s.core, s.runId, i)
+    const key = '作り物の新しい仕組み'
+    const alias = '作り物の別の呼び名'
+    const t = termIdOf(key)
+    const withAlias = { new: { ...newTerm(key, '作り物の仕組みの説明 A').new, aliases: [alias] } }
+    const ids = [await placeVerified(s.call, s.clock, draftInput(1, { terms: [withAlias] }))]
+    // d:02 は別名で指し、照合で説明を直す（持ち主が d:02 に移る）
+    const second = await placeVerified(s.call, s.clock, draftInput(2, { terms: [{ termId: t, term: alias }] }), {
+      patches: [{ path: 'terms.0.explanation', find: '説明 A', to: '説明 B', why: 'term' }],
+    })
+    expect(s.core.store.runTerms(s.runId)).toEqual([
+      { entry: expect.objectContaining({ termId: t, explanation: '作り物の仕組みの説明 B' }), draft: second },
+    ])
+    for (let i = 3; i <= 6; i++) ids.push(await placeVerified(s.call, s.clock, draftInput(i)))
+    // d:02 を除いた5本を先に足して束を書き、その後で d:02 を足す
+    const first = await s.call('topic_add_topics', { items: ids.slice(0, 5).map((draft, i) => ({ draft, rank: i + 1 })) })
+    expect(first.isError, first.text).toBeUndefined()
+    const later = await s.call('topic_add_topics', { items: [{ draft: second, rank: 6 }] })
+    expect(later.isError, later.text).toBeUndefined()
+    const row = s.core.store.draft(s.runId, second)!
+    const rec = JSON.parse(String(s.fake.record(OWNER, `topics:${row.topicId}`)!.json)) as {
+      terms: { termId: string; term: string; explanation: string }[]
+    }
+    expect(rec.terms[0]).toMatchObject({ termId: t, term: alias, explanation: '作り物の仕組みの説明 B' })
   })
 })

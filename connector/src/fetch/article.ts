@@ -3,19 +3,20 @@
 //   今日の robots.txt と AI の意思表示で取ってよい道だけ（読んでいない・断る・止める道へはたどらない）。1つの応答は 1MB で止める
 // - 取りに行く前に、そのホストの次に取ってよい時刻を予約してから待つ（pace.ts）。応答が終わった時刻からも間をあける。道具の呼び出しの
 //   待ちが15秒を超える時は「混んでいます」
-// - 403・429・確認画面が返ったら、その日はそのホストを取らない（名前・道・時刻を替えて試し直さない。host_rules を unreadable に）
-// - 1つの回に取りに行くのは 100本・1つのホストに 40本まで（一覧・本文の先読み・電文を含む。控えから返すのは数えない。robots.txt と
-//   AI の意思表示の読みは数えない）
+// - 403・429・確認画面が返ったら、その日はそのホストを取らない（名前・道・時刻を替えて試し直さない。host_rules を unreadable に）。
+//   予約の間を待った後と転送の各段でも、取りに行く前にそのホストの今日の状態を見直す（同時の呼び出しで、待っていた要求が 403 の後に出ない）
+// - 1つの回に取りに行くのは 100本・1つのホストに 40本まで、1日（日本時間）に 300本まで（一覧・本文の先読み・電文を含む。控えから
+//   返すのは数えない。robots.txt と AI の意思表示の読み・規約と気象庁の見張り・probe の番号は数えない）
 // 本文の取り方（data の body の形）: html（scopes・案内の行・記者の質問の段を落とす）・anchor（一覧のページの #番号 の項目）・
 // jma-xml（電文を文字に）・feed（Global Voices。RSS の全文。記事のページは取らない）。本文が200字未満の控えは出典にできない
-import { publishedAtOf } from '../../../src/domain/jst'
+import { jstDateOf, publishedAtOf } from '../../../src/domain/jst'
 import { SOURCE_BODY_MIN_CHARS } from '../../../src/domain/limits'
 import { log } from '../log'
 import type { VaultCore } from '../vault/core'
 import type { MaterialRow, RunRow } from '../vault/store'
-import { metaNoAi, xRobotsNoAi } from './aiSignals'
+import { headerAiStop, metaNoAi, tdmMetaReserved } from './aiSignals'
 import { USER_AGENT } from './aiAgents'
-import { normalizeEvents, readAnchor, readBody, type HtmlEvent } from './htmlTokens'
+import { normalizeEvents, readAnchor, readBody, type HtmlEvent, type QaCont } from './htmlTokens'
 import { rewriterEvents } from './htmlRewriter'
 import { parseTelegram, type Telegram } from './jma'
 import { hostGapMs, reserve, settle, waitFor } from './pace'
@@ -26,6 +27,7 @@ import {
   charsetOf,
   checkBodyUrl,
   decodeBytes,
+  hasDoubleSlash,
   isChallenge,
   isFeedResponse,
   isPdfResponse,
@@ -33,12 +35,17 @@ import {
   mimeOf,
   readCapped,
 } from './urlPolicy'
-import { checkPath, hopAllowedByRules, markBodyStop, markHostUnreadable } from './watch'
+import { acceptedOfHost, checkPath, hopAllowedByRules, markBodyStop, markHostUnreadable, rulesDataOf } from './watch'
+import { decidePath } from './robots'
 
 /** 1つの回に取りに行く上限（一覧・本文の先読み・電文を含む） */
 export const RUN_FETCH_LIMIT = 100
 /** 1つの回に1つのホストへ取りに行く上限 */
 export const HOST_FETCH_LIMIT = 40
+/** 1日（日本時間）に取りに行く上限（回をまたいで数える。robots.txt・tdmrep.json・規約の見張り・気象庁の見張り・probe は数えない） */
+export const DAY_FETCH_LIMIT = 300
+/** 1日の数を置く meta の鍵（{ day, n }。日が替われば 0 から） */
+export const NET_DAILY_META = 'netDaily'
 /** 控えに持つ本文の上限（字） */
 export const MATERIAL_MAX_CHARS = 12_000
 /** 1回の要求を待つ上限（ms） */
@@ -53,6 +60,8 @@ export interface FetchEnv {
   /** 1つの回の上限（既定 100・40） */
   runLimit: number
   hostLimit: number
+  /** 1日（日本時間）の上限（既定 300） */
+  dayLimit?: number
 }
 
 export const DEFAULT_FETCH_ENV: FetchEnv = {
@@ -61,6 +70,13 @@ export const DEFAULT_FETCH_ENV: FetchEnv = {
   html: rewriterEvents,
   runLimit: RUN_FETCH_LIMIT,
   hostLimit: HOST_FETCH_LIMIT,
+  dayLimit: DAY_FETCH_LIMIT,
+}
+
+/** 今日（日本時間）取りに行った数（回をまたいで。数えるのは sourceGet の count の要求だけ） */
+export function netToday(core: VaultCore): number {
+  const m = core.store.getMeta<{ day: string; n: number }>(NET_DAILY_META)
+  return m && m.day === jstDateOf(core.now()) ? m.n : 0
 }
 
 /** その Vault の取りに行く中身の data（vault/tools/fetch.ts の createFetchWork が持つ物。無ければ既定） */
@@ -95,7 +111,8 @@ export type GetResult =
   | { ok: true; url: string; status: number; headers: Headers; bytes: Uint8Array; truncated: boolean }
   | {
       ok: false
-      why: 'busy' | 'budget' | 'host-budget' | 'blocked' | 'status' | 'network' | 'redirect'
+      /** robots・ai: 待っている間に今日の決まりが変わり、その道を断る・止める（同時の呼び出しの後） */
+      why: 'busy' | 'budget' | 'host-budget' | 'blocked' | 'status' | 'network' | 'redirect' | 'robots' | 'ai'
       url: string
       status?: number
       headers?: Headers
@@ -114,6 +131,23 @@ const timeoutSignal = (): AbortSignal | undefined =>
     ? AbortSignal.timeout(SOURCE_TIMEOUT_MS)
     : undefined
 
+/**
+ * 取りに行く直前の見直し（読まない。今日の決まりの行だけを見る）: markBlocked なら今日 unreadable のホストを断る（'blocked'）。rules なら、
+ * 今日の決まりがある時に、その道が断る・止める道になっていれば断る（'robots'・'ai'。本文の noai の止めを含む）。今日の決まりの無い時は
+ * 呼ぶ側が先に読んでいる（checkPath）ので、ここでは断らない
+ */
+function recheckHost(core: VaultCore, env: FetchEnv, url: URL, req: GetRequest): 'blocked' | 'robots' | 'ai' | null {
+  const host = url.hostname.toLowerCase()
+  const row = core.store.hostRule(host)
+  if (!row || row.day !== jstDateOf(core.now())) return null
+  if (req.markBlocked !== false && row.state === 'unreadable') return 'blocked'
+  if (req.rules === false) return null
+  const data = rulesDataOf(row)
+  if (!data) return null
+  const v = decidePath(data, `${url.pathname}${url.search}`, acceptedOfHost(env, host)).verdict
+  return v === 'ok' ? null : v === 'refused' ? 'robots' : 'ai'
+}
+
 /** 出どころへの要求（名乗り・予約の間・回の上限・同じホストの中の転送・1MB・403 と確認画面） */
 export async function sourceGet(core: VaultCore, env: FetchEnv, req: GetRequest): Promise<GetResult> {
   const store = core.store
@@ -129,14 +163,19 @@ export async function sourceGet(core: VaultCore, env: FetchEnv, req: GetRequest)
     if (count) {
       if (store.runCount(req.run!.runId, 'net') >= env.runLimit) return { ok: false, why: 'budget', url: url.href }
       if (store.runCount(req.run!.runId, `net:${host}`) >= env.hostLimit) return { ok: false, why: 'host-budget', url: url.href }
+      if (netToday(core) >= (env.dayLimit ?? DAY_FETCH_LIMIT)) return { ok: false, why: 'budget', url: url.href }
     }
     const now = core.now()
     const wait = reserve(store, host, now, hostGapMs(store, env.sources, host), req.maxWait)
     if (wait === null) return { ok: false, why: 'busy', url: url.href, waitMs: waitFor(store, host, now) }
     if (wait > 0) await core.sleep(wait)
+    // 待っている間に、同じホストへのほかの呼び出しが 403・確認画面・AI への意思表示を受けていれば取りに行かない（予約の後・転送の各段でも）
+    const now2 = recheckHost(core, env, url, req)
+    if (now2) return { ok: false, why: now2, url: url.href }
     if (count) {
       store.addRunCount(req.run!.runId, 'net')
       store.addRunCount(req.run!.runId, `net:${host}`)
+      store.setMeta(NET_DAILY_META, { day: jstDateOf(core.now()), n: netToday(core) + 1 })
     }
     let res: Response
     try {
@@ -168,6 +207,7 @@ export async function sourceGet(core: VaultCore, env: FetchEnv, req: GetRequest)
         next.username ||
         next.password ||
         next.port !== url.port ||
+        hasDoubleSlash(next.pathname) ||
         (req.hop && !req.hop(next)) ||
         (req.rules !== false && !hopAllowedByRules(core, env, next))
       )
@@ -229,7 +269,7 @@ export const BODY_REFUSAL_TEXTS: Readonly<Record<BodyRefusal, string>> = {
   charset: '文字の符号が読めません（この資料は読めません）',
   format: '資料の形が読めません',
   busy: '混んでいます。もう一度呼んでください（同じホストへの間をあけています）',
-  budget: 'この回は、これ以上取りに行けません（1つの回に100本・1つのホストに40本まで）',
+  budget: 'これ以上取りに行けません（1つの回に100本・1つのホストに40本・1日（日本時間）に300本まで）',
   permit: 'この出どころは、この回にこれ以上本文を取れません（許しの範囲の本数）',
   status: '資料を取れませんでした（相手のサイトの答えが正常ではありません）',
   network: '資料を取れませんでした（つながりませんでした）。少し待ってから、もう一度呼んでください',
@@ -248,6 +288,8 @@ export interface BodyRead {
   scope?: string | null
   /** 記者の質問の印ごとの行の数と落とした数（PRESS_QUESTION_MARKS の番号ごと） */
   marks?: { lines: number; dropped: number }[]
+  /** 記者の質問の段の続きとして落とした行・話し手の印で段を終えた行の数 */
+  cont?: QaCont
   /** 電文の時 */
   telegram?: Telegram
 }
@@ -318,13 +360,14 @@ export async function fetchBody(
   const ctype = got.headers.get('content-type')
   if (isPdfResponse(ctype)) return { ok: false, why: 'pdf' }
   const host = new URL(got.url).hostname.toLowerCase()
-  if (xRobotsNoAi(got.headers.get('x-robots-tag'))) {
-    markBodyStop(store, host, core.now(), 'x-robots-noai')
+  const headerStop = headerAiStop(got.headers)
+  if (headerStop) {
+    markBodyStop(store, host, core.now(), headerStop)
     return { ok: false, why: 'ai' }
   }
   const { text } = responseText(got)
   if (text === null) return { ok: false, why: 'charset' }
-  if (src.terms.rssRefused && isFeedResponse(ctype, text.slice(0, 600))) return { ok: false, why: 'feed' }
+  if (src.terms.rssRefused && isFeedResponse(ctype, text.slice(0, FEED_HEAD_CHARS))) return { ok: false, why: 'feed' }
   const fallbackTitle = opts.fallback?.title ?? null
   const fallbackDate = opts.fallback?.published ?? null
   if (src.body.kind === 'jma-xml') {
@@ -344,12 +387,11 @@ export async function fetchBody(
   }
   if (mimeOf(ctype) && !/html|xml/.test(mimeOf(ctype))) return { ok: false, why: 'format' }
   const events = normalizeEvents(await env.html(text))
-  const metas = events.filter((e) => e.t === 'open' && e.name === 'meta')
-  for (const m of metas)
-    if (m.t === 'open' && metaNoAi(m.attrs.name ?? '', m.attrs.content ?? '')) {
-      markBodyStop(store, host, core.now(), 'meta-noai')
-      return { ok: false, why: 'ai' }
-    }
+  const metaStop = metaAiStop(events)
+  if (metaStop) {
+    markBodyStop(store, host, core.now(), metaStop)
+    return { ok: false, why: 'ai' }
+  }
   if (src.body.kind === 'anchor') {
     const id = decodeURIComponent(new URL(got.url).hash.slice(1) || new URL(rawUrl).hash.slice(1))
     const r = id ? readAnchor(events, id, { dropBlocks: src.body.dropBlocks, countMarks: PRESS_QUESTION_MARKS }) : null
@@ -366,6 +408,7 @@ export async function fetchBody(
         lines,
         chars: charLen(lines),
         marks: r?.marks,
+        cont: r?.cont,
       },
     }
   }
@@ -385,11 +428,30 @@ export async function fetchBody(
       chars: b.chars,
       scope: b.scope,
       marks: b.marks,
+      cont: b.cont,
     },
   }
 }
 
 const charLen = (lines: readonly string[]) => Array.from(lines.join('\n')).length
+
+/** RSS・Atom の応答かを見る頭の字数（<?xml-stylesheet?>・<!DOCTYPE>・注の後でも見つかるように） */
+export const FEED_HEAD_CHARS = 4_000
+
+/**
+ * HTML の meta の AI への意思表示（robots・AI の名前の noai と Claude の名前の noindex（metaNoAi）・TDMRep の tdm-reservation: 1）。
+ * 止める印か null
+ */
+export function metaAiStop(events: readonly HtmlEvent[]): string | null {
+  for (const e of events) {
+    if (e.t !== 'open' || e.name !== 'meta') continue
+    const name = e.attrs.name ?? ''
+    const content = e.attrs.content ?? ''
+    if (metaNoAi(name, content)) return 'meta-noai'
+    if (tdmMetaReserved(name, content)) return 'tdm-reservation'
+  }
+  return null
+}
 
 // ---------- Global Voices（RSS の全文） ----------
 

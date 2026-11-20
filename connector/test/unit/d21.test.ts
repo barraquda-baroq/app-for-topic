@@ -182,4 +182,33 @@ describe('回の種類を残さない・分けない', () => {
     // 夜の仕事も、連携していない時は片付けだけ（'skipped'）
     expect(await core.nightly()).toBe('skipped')
   })
+
+  it('連携していない間も、夜の仕事が30日を過ぎた写しの行を消す（クラウドへは出ない。横断の点検）', async () => {
+    const fake = new FakeFirebase()
+    let calls = 0
+    const counting = ((input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1
+      return fake.fetch(input as never, init)
+    }) as typeof fetch
+    const m = makeFakeMonth({ until: '2026-11-19', days: 5, untilSlot: '12' })
+    seedRecords(fake, fakeRecordsOf(m))
+    const { core, grant, clock } = await pairedCore(fake, { clock: { now: NOW }, fetch: counting })
+    await drainAlarms(core, clock)
+    const before = core.mirror.counts()
+    expect(before.editions ?? 0).toBeGreaterThan(0)
+    expect(before.topics ?? 0).toBeGreaterThan(0)
+    const packs = before.termPacks ?? 0
+    fake.setConnector(null)
+    clock.now += 61_000
+    expect(await core.checkGrant(grant)).toBe(false)
+    expect(core.pairingState()).toBe('unpaired')
+    const sent = calls
+    clock.now += 40 * 86_400_000
+    expect(await core.nightly()).toBe('skipped')
+    const after = core.mirror.counts()
+    for (const t of ['editions', 'topics', 'corrections', 'editionFails']) expect(after[t] ?? 0, t).toBe(0)
+    // 消さない表（辞書の束）はそのまま
+    expect(after.termPacks ?? 0).toBe(packs)
+    expect(calls).toBe(sent)
+  })
 })

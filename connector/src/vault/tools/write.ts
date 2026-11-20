@@ -86,13 +86,27 @@ export const FIND_TOPICS_MAX = 60
 interface WriteNotes {
   /** 足した訂正の id */
   corrections?: string[]
+  /**
+   * 書こうとした訂正の id（commit の前に置く。答えが届かずに試し直して「もうある」になった時も、送り直した時も、この回の物として数える）
+   */
+  correctionsTried?: string[]
   /** 足した辞書の束の id */
   packs?: string[]
+  /**
+   * 下書きごとに書こうとした話題の id と順位（commit の前に置く。答えが届かずに順位を替えて送り直されても、前の話題がクラウドにあれば
+   * 2本目を書かない）
+   */
+  topicsTried?: Record<string, { id: string; rank: number }>
 }
 
 const notesOf = (core: VaultCore, runId: string): WriteNotes => (core.store.getRun(runId)?.notes ?? {}) as WriteNotes
 
-function addNote(core: VaultCore, runId: string, key: keyof WriteNotes, ids: readonly string[]): void {
+function addNote(
+  core: VaultCore,
+  runId: string,
+  key: 'corrections' | 'correctionsTried' | 'packs',
+  ids: readonly string[],
+): void {
   if (!ids.length) return
   const notes = core.store.getRun(runId)?.notes ?? {}
   const cur = Array.isArray(notes[key]) ? (notes[key] as string[]) : []
@@ -260,15 +274,34 @@ export const topicAddTopics: ToolHandler = async (core, args, ctx) => {
     return withStructured(fail(['足せる下書きがありません（何も書いていません）:', ...lines].join('\n')), structured([], skipped))
   }
 
-  let last: { plans: ItemPlan[]; failed: { ref: string; reason: string; problems: Problem[] }[]; packs: TermPack[] } = {
+  /** 前の呼び出しで書けていた話題（答えが届かずに、順位を替えて送り直された下書き） */
+  type Reused = { draft: DraftRow; rank: number; topicId: string }
+  let last: {
+    plans: ItemPlan[]
+    failed: { ref: string; reason: string; problems: Problem[] }[]
+    packs: TermPack[]
+    reused: Reused[]
+  } = {
     plans: [],
     failed: [],
     packs: [],
+    reused: [],
   }
   const out = await ctx.add(
     () => {
       const now = core.now()
-      const { plans, failed } = plan(now)
+      const built = plan(now)
+      const failed = built.failed
+      // 前に書こうとした話題（別の順位）がクラウドにある下書きは、2本目を書かずに前の話題を足した物として扱う
+      const tried = notesOf(core, run.runId).topicsTried ?? {}
+      const reused: Reused[] = []
+      const plans: ItemPlan[] = []
+      for (const p of built.plans) {
+        const prev = tried[p.draft.draftId]
+        if (prev && prev.id !== p.topic.id && core.mirror.has('topics', prev.id))
+          reused.push({ draft: p.draft, rank: prev.rank, topicId: prev.id })
+        else plans.push(p)
+      }
       const entries = packEntriesFor(core, run, core.store.drafts(run.runId))
       const overlap = termOverlapProblems(entries, core.dictionary.subsetFor({ entries }))
       if (overlap.length)
@@ -290,12 +323,17 @@ export const topicAddTopics: ToolHandler = async (core, args, ctx) => {
             result: fail(['辞書の束を作れません（何も書いていません）:', ...problemLines(c.errors)].join('\n')),
           }
       }
-      last = { plans, failed, packs }
+      last = { plans, failed, packs, reused }
+      const writing = plans.filter((p) => !core.mirror.has('topics', p.topic.id))
+      if (writing.length) {
+        const notes = core.store.getRun(run.runId)?.notes ?? {}
+        const next = { ...tried }
+        for (const p of writing) next[p.draft.draftId] = { id: p.topic.id, rank: p.rank }
+        core.store.setRunNotes(run.runId, { ...notes, topicsTried: next })
+      }
       const records: WritableRecord[] = [
         ...packs.map((p) => ({ table: 'termPacks' as const, record: p })),
-        ...plans
-          .filter((p) => !core.mirror.has('topics', p.topic.id))
-          .map((p) => ({ table: 'topics' as const, record: p.topic })),
+        ...writing.map((p) => ({ table: 'topics' as const, record: p.topic })),
       ]
       return { ok: true, records }
     },
@@ -305,6 +343,7 @@ export const topicAddTopics: ToolHandler = async (core, args, ctx) => {
   const added = last.plans.filter((p) => core.mirror.has('topics', p.topic.id))
   core.store.transaction(() => {
     for (const p of added) core.store.putDraft({ ...p.draft, rank: p.rank, topicId: p.topic.id, updated: core.now() })
+    for (const r of last.reused) core.store.putDraft({ ...r.draft, rank: r.rank, topicId: r.topicId, updated: core.now() })
     addNote(
       core,
       run.runId,
@@ -315,6 +354,8 @@ export const topicAddTopics: ToolHandler = async (core, args, ctx) => {
   const remaining = core.store.drafts(run.runId).filter((d) => d.status === 'verified' && d.topicId === null).length
   const lines = [`話題を足しました: ${added.length}件`]
   for (const p of added) lines.push(`- ${topicShortId(p.topic.id)}（${p.draft.draftId}・順位 ${p.rank}）`)
+  for (const r of last.reused)
+    lines.push(`- ${topicShortId(r.topicId)}（${r.draft.draftId}・もう足してありました。順位は前の ${r.rank} のまま）`)
   const packWords = last.packs.reduce((n, p) => n + p.entries.length, 0)
   if (last.packs.length) lines.push(`辞書の束: ${last.packs.length}つ（語 ${packWords}）を話題より先に足しました`)
   const notAdded = last.plans.filter((p) => !core.mirror.has('topics', p.topic.id))
@@ -334,7 +375,10 @@ export const topicAddTopics: ToolHandler = async (core, args, ctx) => {
   return withStructured(
     ok(lines.join('\n')),
     structured(
-      added.map((p) => ({ id: topicShortId(p.topic.id), label: `${p.draft.draftId}・順位 ${p.rank}` })),
+      [
+        ...added.map((p) => ({ id: topicShortId(p.topic.id), label: `${p.draft.draftId}・順位 ${p.rank}` })),
+        ...last.reused.map((r) => ({ id: topicShortId(r.topicId), label: `${r.draft.draftId}・順位 ${r.rank}（前の呼び出し）` })),
+      ],
       skipped,
     ),
   )
@@ -668,7 +712,10 @@ export const topicAddCorrection: ToolHandler = async (core, args, ctx) => {
     throw new ConnectorError('invalid', 'text に改行・URL・記法の記号は使えません（ふつうの文で書いてください）。')
   const perRun = kind === 'correction' ? CORRECTIONS_PER_RUN.correction : CORRECTIONS_PER_RUN.edition
   const perRunText = `1つの回に足せる訂正は${perRun}件までです（${RUN_KIND_LABELS[kind] ?? 'この回'}）。`
-  if (core.store.runCount(run.runId, 'corrections') >= perRun) throw new ConnectorError('draft_limit', perRunText)
+  // 書く前の確かめ（読み取りを使わない）。もうある訂正の送り直しは、上限に届いていても「もうある」と答える（下の build の中で）
+  const pre = resolveTopicRef(ref, correctableTopics(core))
+  const known = pre.ok && core.mirror.has('corrections', correctionIdOf({ topicId: pre.id, text }))
+  if (!known && core.store.runCount(run.runId, 'corrections') >= perRun) throw new ConnectorError('draft_limit', perRunText)
   let record: CorrectionRecord | null = null
   let already = false
   const out = await ctx.add(() => {
@@ -707,19 +754,26 @@ export const topicAddCorrection: ToolHandler = async (core, args, ctx) => {
       return { ok: false, result: fail(['訂正を足せません:', ...problemLines(checked.errors)].join('\n')) }
     if (correctionsToday(core, core.now()) >= CORRECTIONS_PER_DAY)
       return { ok: false, result: fail(`今日（日本時間）足せる訂正は${CORRECTIONS_PER_DAY}件までです。明日また足してください。`) }
+    // 書く前に、この回が書こうとした訂正として覚える（答えが届かずに試し直した・送り直した時も、この回の物として数えるため）
+    addNote(core, run.runId, 'correctionsTried', [c.id])
     return { ok: true, records: [{ table: 'corrections', record: c }] }
   })
   if (!out.ok) return out.result
   const c = record as CorrectionRecord | null
   if (!c || !core.mirror.has('corrections', c.id))
     return fail(`訂正を書けませんでした${out.failed ? `（${out.failed}）` : ''}。少し待ってから、もう一度呼んでください。`)
-  if (!already) {
+  // この呼び出しで書けた（試し直しで「もうある」になった時も）・この回が前に書こうとした訂正は、まだ数えていなければ、この回の訂正として数える
+  const notes = notesOf(core, run.runId)
+  const mine = out.created.has(`corrections:${c.id}`) || (notes.correctionsTried ?? []).includes(c.id)
+  const counted = (notes.corrections ?? []).includes(c.id)
+  const added = mine && !counted
+  if (added) {
     core.store.addRunCount(run.runId, 'corrections')
     addNote(core, run.runId, 'corrections', [c.id])
   }
   return withStructured(
     ok(
-      `${already ? '同じ訂正はもうあります' : '訂正を足しました'}: ${c.id}（${topicShortId(c.topicId)} への訂正。話題は書き換えていません）`,
+      `${added || !already ? '訂正を足しました' : '同じ訂正はもうあります'}: ${c.id}（${topicShortId(c.topicId)} への訂正。話題は書き換えていません）`,
     ),
     structured([{ id: c.id, label: topicShortId(c.topicId) }]),
   )

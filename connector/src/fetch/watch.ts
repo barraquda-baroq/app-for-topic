@@ -4,7 +4,8 @@
 //   topic_status に「robots.txt が変わりました」。読めない時（5xx・時間切れ・403・確認画面・文字の符号が読めない）は、その日はそのホストから
 //   取らない。404 は決まりなし
 // - 規約のページ（日曜だけ）: data の termsPages のうち watch: 'weekly' で指紋のある物を取り、data の指紋と比べる。違えばその出どころを
-//   「取らない（規約のページが変わりました）」にする（気象庁の 'probe-only' は取らない）
+//   「取らない（規約のページが変わりました）」にする（気象庁の 'probe-only' は取らない）。止めは data の指紋が新しくなるまで続け（次の週に
+//   読めない・同じでも外さない）、2週続けて読めないページも同じに止める
 // - 気象庁の見張り（3時間ごと。気象庁の data が 'ok' で指紋がそろった時だけ）: 短い Atom を1本読み、版に入れてよい種類の項目だけ（題・
 //   リンク・時刻・種類）を24時間持つ（電文は読まない）
 // - 一覧の作りの印（source_state）: 一覧が 200 なのに道の形に合う項目が0件・日付の読めた項目が半分未満（取りは止めない）
@@ -14,7 +15,8 @@ import type { VaultCore } from '../vault/core'
 import type { TaskStep } from '../vault/runs'
 import type { HostRuleRow, MirrorStore, RunRow } from '../vault/store'
 import { envOf, responseText, sourceGet, type FetchEnv } from './article'
-import { parseTdmRep } from './aiSignals'
+import { headerAiStop, parseTdmRep } from './aiSignals'
+import { hostGapMs, settle } from './pace'
 import { normalizeEvents } from './htmlTokens'
 import { hasNeedWord, kindOfTitle, JMA_KINDS } from './jma'
 import { crawlDelayOf, decidePath, hostRulesData, hostStateOf, type HostRulesData } from './robots'
@@ -28,6 +30,8 @@ import { listHopOk } from './urlPolicy'
 export const STEP_WAIT_MAX_MS = 1_500
 /** 1歩の外への要求の数 */
 export const STEP_REQUESTS = 6
+/** robots.txt の後の tdmrep.json を待つ上限（ms。そのホストの間がこれより長い時は、その日の決まりを読まない＝取らない） */
+export const TDM_WAIT_MAX_MS = 15_000
 
 /** host_rules の data を読む（形が違えば null） */
 export function rulesDataOf(row: HostRuleRow | null): HostRulesData | null {
@@ -114,6 +118,7 @@ export function markBodyStop(store: MirrorStore, host: string, now: number, reas
  */
 export async function readHostRules(core: VaultCore, env: FetchEnv, host: string, maxWait: number): Promise<HostRuleRow | null> {
   const store = core.store
+  const startedAt = core.now()
   const prev = store.hostRule(host)
   const prevData = rulesDataOf(prev)
   // http の一覧だけのホスト（許しの社で https の一覧が無い時）は、robots.txt も同じ http で読む（robots.txt は scheme ごと）
@@ -136,13 +141,21 @@ export async function readHostRules(core: VaultCore, env: FetchEnv, host: string
     robotsText = responseText(robots).text
     if (robotsText === null) unreadable = true
   } else if (robots.status !== 404 && robots.status !== 410) unreadable = true
+  // 読んだ robots.txt の Crawl-delay を、続く tdmrep.json と最初のページから効かせる（前の日の値で予約した間を、新しい間まで進める）
+  let gap = hostGapMs(store, env.sources, host)
+  if (robotsText !== null) {
+    const delay = crawlDelayOf(hostRulesData({ status: robotsStatus, text: robotsText }, { status: 0, entries: null }, prevData))
+    if (delay !== null) gap = Math.max(gap, Math.ceil(delay * 1_000))
+    settle(store, host, core.now(), gap)
+  }
   let tdmEntries = null
   let tdmStatus = 0
   if (!unreadable) {
     const tdm = await sourceGet(core, env, {
       url: `${scheme}://${host}/.well-known/tdmrep.json`,
       run: null,
-      maxWait: Math.max(maxWait, 2_000),
+      // robots.txt の後の1本は、そのホストの間（Crawl-delay・data の crawlDelaySec）だけ待つ（15秒まで。長い間のホストを読みきれるように）
+      maxWait: Math.max(maxWait, Math.min(gap, TDM_WAIT_MAX_MS) + 1_000),
       count: false,
       markBlocked: false,
       rules: false,
@@ -159,9 +172,16 @@ export async function readHostRules(core: VaultCore, env: FetchEnv, host: string
     { status: tdmStatus, entries: tdmEntries },
     prevData,
   )
-  const decided = unreadable
-    ? { state: 'unreadable' as const, reasons: [] }
-    : hostStateOf(data, hostPaths(env, host), acceptedOfHost(env, host))
+  // 読んでいる間に、同じホストへのほかの呼び出しが書いた止め（本文の noai）と、今日の 403・確認画面を消さない（読み始めの前の行で書き直さない）
+  const cur = store.hostRule(host)
+  const curStop = (cur?.data as Partial<HostRulesData> | undefined)?.stop
+  const stop = curStop ?? prevData?.stop
+  if (stop) data.stop = stop
+  const blockedMeanwhile = cur !== null && cur.day === jstDateOf(now) && cur.state === 'unreadable' && cur.checked >= startedAt
+  const decided =
+    unreadable || blockedMeanwhile
+      ? { state: 'unreadable' as const, reasons: [] }
+      : hostStateOf(data, hostPaths(env, host), acceptedOfHost(env, host))
   const changed = prevData && prevData.fp !== data.fp && !unreadable ? now : (prev?.changed ?? null)
   const row: HostRuleRow = {
     host,
@@ -173,6 +193,8 @@ export async function readHostRules(core: VaultCore, env: FetchEnv, host: string
     changed,
   }
   store.putHostRule(row)
+  // 新しい Crawl-delay で、tdmrep.json の後の間も進める
+  settle(store, host, core.now(), hostGapMs(store, env.sources, host))
   log('host_rules', { host, result: decided.state, code: robotsStatus })
   return row
 }
@@ -297,7 +319,21 @@ async function watchTermsPage(
       }
     }
   }
-  store.putTermsWatch({ url, source: src.id, fingerprint: fp, state, checked: core.now() })
+  // 一度「変わった」と見たページは、data の指紋が新しくなるまで止めたまま（次の週に同じ・読めないでも外さない）。初めから・続けて読めない
+  // ページ（規約を改めてページが移った・消えた・403・robots.txt で断る）は、2週続いたら「変わった」と同じに止める
+  const prev = store.termsWatch(url)
+  const sameData = prev !== null && (prev.expected ?? expected) === expected
+  if (sameData && prev.state === 'changed') state = 'changed'
+  else if (state === 'unreadable' && sameData && prev.state === 'unreadable' && jstDateOf(prev.checked) !== jstDateOf(core.now()))
+    state = 'changed'
+  store.putTermsWatch({
+    url,
+    source: src.id,
+    fingerprint: fp ?? (sameData ? prev.fingerprint : null),
+    state,
+    checked: core.now(),
+    expected,
+  })
   if (state === 'changed') log('terms_changed', { source: src.id })
   return state
 }
@@ -352,6 +388,12 @@ export async function jmaWatchStep(core: VaultCore, now: number): Promise<TaskSt
     hop: (h) => listHopOk(src, list, h),
   })
   if (!got.ok) return got.why === 'busy' ? { done: false, next: core.now() + 2_000 } : { done: true }
+  // 一覧の応答の AI への意思表示（候補集めの一覧と同じに止める）
+  const stop = headerAiStop(got.headers)
+  if (stop) {
+    markBodyStop(store, u.hostname.toLowerCase(), core.now(), stop)
+    return { done: true }
+  }
   const { text } = responseText(got)
   if (text === null) return { done: true }
   const rows: { link: string; title: string; kind: string; at: number }[] = []
